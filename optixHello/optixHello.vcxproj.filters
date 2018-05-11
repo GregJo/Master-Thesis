@@ -15,13 +15,13 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <None Include="..\src\optixHello\draw_color.cu">
-      <Filter>CUDA Files</Filter>
-    </None>
-  </ItemGroup>
-  <ItemGroup>
     <ClCompile Include="..\src\optixHello\optixHello.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="..\src\optixHello\draw_color.cu">
+      <Filter>CUDA Files</Filter>
+    </None>
   </ItemGroup>
 </Project>

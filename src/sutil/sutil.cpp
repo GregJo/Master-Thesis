@@ -41,6 +41,7 @@
 #include <sutil/sutil.h>
 #include <sutil/HDRLoader.h>
 #include <sutil/PPMLoader.h>
+#include "../PNGLoader.h"
 #include <sampleConfig.h>
 
 #include <optixu/optixu_math_namespace.h>
@@ -688,9 +689,22 @@ optix::TextureSampler sutil::loadTexture( optix::Context context,
               (filename[len-2] == 'D' || filename[len-2] == 'd') &&
               (filename[len-1] == 'R' || filename[len-1] == 'r');
     }
+
+	bool isPNG = false;
+	if (len >= 3) {
+		isPNG = (filename[len - 3] == 'P' || filename[len - 3] == 'p') &&
+			(filename[len - 2] == 'N' || filename[len - 2] == 'n') &&
+			(filename[len - 1] == 'G' || filename[len - 1] == 'g');
+	}
+
     if ( isHDR ) {
         return loadHDRTexture(context, filename, default_color);
-    } else {
+    } 
+	else if (isPNG)
+	{
+		return loadPNGTexture(context, filename, default_color);
+	}
+	else {
         return loadPPMTexture(context, filename, default_color);
     }
 }

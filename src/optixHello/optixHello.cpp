@@ -85,136 +85,241 @@ ray launching and so the additional rays can be launched. For that i will need a
 #include "commonStructs.h"
 
 #include <optixu/optixpp_namespace.h>
+#include <optixu/optixu_math_stream_namespace.h>
 
 #include <OptiXMesh.h>
 
+#include <iomanip>
 
 using namespace optix;
 
-void printUsageAndExit( const char* argv0 );
+const char* const SAMPLE_NAME = "optixHello";
 
-// Tutorial predeclares
-void cameraSetup();
-void geometrySetup();
+//
+// Globals
+//
 
-optix::float3 eye;
+Context        context;
+uint32_t       width = 1024u;
+uint32_t       height = 768u;
+bool           use_pbo = false;
+Aabb    aabb;
+
+float3         camera_up;
+float3         camera_lookat;
+float3         camera_eye;
+
 optix::float3 U, V, W;
 
-void cameraSetup()
+void printUsageAndExit( const char* argv0 );
+
+//
+// Predeclares
+//
+
+struct UsageReportLogger;
+
+Buffer getOutputBuffer();
+void destroyContext();
+void createContext(int usage_report_level, UsageReportLogger* logger);
+void loadMesh(const std::string& filename);
+void setupCamera();
+void setupLights();
+void setupCamera();
+
+//
+// Helper Functions
+//
+
+Buffer getOutputBuffer()
 {
-	// Tutorial Camera Setup
-	optix::float3 lookAt, up;
-	eye.x = 500.0f;
-	eye.y = 1000.0f;
-	eye.z = 0.0f;
+	return context["output_buffer"]->getBuffer();
+}
 
-	lookAt.x = 0.01f;
-	lookAt.y = 0.01f;
-	lookAt.z = 0.01f;
 
-	up.x = 0.0f;
-	up.y = 1.0f;
-	up.z = 0.0f;
+void destroyContext()
+{
+	if (context)
+	{
+		context->destroy();
+		context = 0;
+	}
+}
 
-	sutil::calculateCameraVariables(eye, lookAt, up, 90.0f, 4.0f / 3.0f, U, V, W);
+
+struct UsageReportLogger
+{
+	void log(int lvl, const char* tag, const char* msg)
+	{
+		std::cout << "[" << lvl << "][" << std::left << std::setw(12) << tag << "] " << msg;
+	}
+};
+
+// Static callback
+void usageReportCallback(int lvl, const char* tag, const char* msg, void* cbdata)
+{
+	// Route messages to a C++ object (the "logger"), as a real app might do.
+	// We could have printed them directly in this simple case.
+
+	UsageReportLogger* logger = reinterpret_cast<UsageReportLogger*>(cbdata);
+	logger->log(lvl, tag, msg);
+}
+
+void registerExitHandler()
+{
+	// register shutdown handler
+#ifdef _WIN32
+	//glutCloseFunc(destroyContext);  // this function is freeglut-only
+#else
+	atexit(destroyContext);
+#endif
+}
+
+
+void createContext(int usage_report_level, UsageReportLogger* logger)
+{
+	// Set up context
+	context = Context::create();
+	context->setRayTypeCount(2);
+	context->setEntryPointCount(1);
+	if (usage_report_level > 0)
+	{
+		context->setUsageReportCallback(usageReportCallback, usage_report_level, logger);
+	}
+
+	context["radiance_ray_type"]->setUint(0u);
+	context["shadow_ray_type"]->setUint(1u);
+	context["scene_epsilon"]->setFloat(1.e-6f);
+
+	Buffer buffer = sutil::createOutputBuffer(context, RT_FORMAT_UNSIGNED_BYTE4, width, height, use_pbo);
+	context["output_buffer"]->set(buffer);
+
+	// Ray generation program
+	const char *ptx = sutil::getPtxString(SAMPLE_NAME, "draw_color.cu");
+	Program ray_gen_program = context->createProgramFromPTXString(ptx, "pinhole_camera");
+	context->setRayGenerationProgram(0, ray_gen_program);
+
+	// Exception program
+	Program exception_program = context->createProgramFromPTXString(ptx, "exception");
+	context->setExceptionProgram(0, exception_program);
+	context["bad_color"]->setFloat(1.0f, 0.0f, 1.0f);
+
+	// Miss program
+	context->setMissProgram(0, context->createProgramFromPTXString(sutil::getPtxString(SAMPLE_NAME, "draw_color.cu"), "miss"));
+	context["bg_color"]->setFloat(0.2f, 0.2f, 0.2f);
+}
+
+
+void loadMesh(const std::string& filename)
+{
+	OptiXMesh mesh;
+	mesh.context = context;
+	//mesh.closest_hit = context->createProgramFromPTXString(sutil::getPtxString(SAMPLE_NAME, "draw_color.cu"), "closest_hit_radiance0");
+	loadMesh(filename, mesh);
+
+	aabb.set(mesh.bbox_min, mesh.bbox_max);
+
+	GeometryGroup geometry_group = context->createGeometryGroup();
+	geometry_group->addChild(mesh.geom_instance);
+	geometry_group->setAcceleration(context->createAcceleration("Trbvh"));
+	context["top_object"]->set(geometry_group);
+	context["top_shadower"]->set(geometry_group);
+}
+
+void setupCamera()
+{
+	const float max_dim = fmaxf(aabb.extent(0), aabb.extent(1)); // max of x, y components
+
+	camera_eye = aabb.center() + make_float3(0.0f, 0.0f, max_dim*1.5f);
+	camera_lookat = aabb.center();
+	camera_up = make_float3(0.0f, 1.0f, 0.0f);
+
+	const float vfov = 90.0f;
+	const float aspect_ratio = static_cast<float>(width) /
+		static_cast<float>(height);
+
+	bool setCustomCameraValues = true;
+	if (setCustomCameraValues)
+	{
+		camera_eye.x = 500.0f;
+		camera_eye.y = 1000.0f;
+		camera_eye.z = 0.0f;
+
+		camera_lookat.x = 0.01f;
+		camera_lookat.y = 0.01f;
+		camera_lookat.z = 0.01f;
+
+		camera_up.x = 0.0f;
+		camera_up.y = 1.0f;
+		camera_up.z = 0.0f;
+	}
+
+	sutil::calculateCameraVariables(
+		camera_eye, camera_lookat, camera_up, vfov, aspect_ratio,
+		U, V, W, true);
+
+	context["eye"]->setFloat(camera_eye);
+	context["U"]->setFloat(U);
+	context["V"]->setFloat(V);
+	context["W"]->setFloat(W);
 }
 
 void setupLights()
 {
-	/*
+	const float max_dim = fmaxf(aabb.extent(0), aabb.extent(1)); // max of x, y components
+
 	BasicLight lights[] = {
-		{ make_float3(-5.0f, 60.0f, -16.0f), make_float3(1.0f, 1.0f, 1.0f), 1 }
+		{ make_float3(-0.5f,  0.25f, -1.0f), make_float3(0.2f, 0.2f, 0.25f), 0, 0 },
+		{ make_float3(-0.5f,  0.0f ,  1.0f), make_float3(0.1f, 0.1f, 0.10f), 0, 0 },
+		{ make_float3(0.5f,  0.5f ,  0.5f), make_float3(0.7f, 0.7f, 0.65f), 1, 0 }
 	};
+	lights[0].pos *= max_dim * 10.0f;
+	lights[1].pos *= max_dim * 10.0f;
+	lights[2].pos *= max_dim * 10.0f;
 
-	RTbuffer light_buffer;
-	RT_CHECK_ERROR( rtBufferCreate( context, &light_buffer ) );
-	//Buffer light_buffer = context->createBuffer(RT_BUFFER_INPUT);
-	RT_CHECK_ERROR( rtBufferSetFormat( RT_FORMAT_USER ) );
-	//light_buffer->setFormat(RT_FORMAT_USER);
-	RT_CHECK_ERROR( rtBufferSetElementSize( sizeof(BasicLight) ) );
-	//light_buffer->setElementSize(sizeof(BasicLight));
-	RT_CHECK_ERROR( rtBufferSetSize1D( light_buffer, sizeof( lights ) / sizeof( lights[0] ) ) );
-	//light_buffer->setSize(sizeof(lights) / sizeof(lights[0]));
-	void* lightData;
-	RT_CHECK_ERROR( rtBufferMap(light_buffer, &lightData) );
-	memcpy(lightData, lights, sizeof(lights));
-	rtBufferUnmap(light_buffer);
-	//light_buffer->unmap();
-	RTvariable lights_variable;
-	RT_CHECK_ERROR( rtContextDeclareVariable(context, &lights_variable) );
+	Buffer light_buffer = context->createBuffer(RT_BUFFER_INPUT);
+	light_buffer->setFormat(RT_FORMAT_USER);
+	light_buffer->setElementSize(sizeof(BasicLight));
+	light_buffer->setSize(sizeof(lights) / sizeof(lights[0]));
+	memcpy(light_buffer->map(), lights, sizeof(lights));
+	light_buffer->unmap();
 
-	RT_CHECK_ERROR(rtVariableSetObject(lights_variable, light_buffer));
-	//context["lights"]->set(light_buffer);
-	*/
+	context["lights"]->set(light_buffer);
 }
+
 
 void setupAdditionalRaysBuffer() 
 {
+	unsigned char maxPerLaunchIdxRayBudget = static_cast<unsigned char>(5u);
+	unsigned char* perLaunchIdxRayBudgets = new unsigned char[width * height * 4];
 
+	// initialize additional rays buffer
+	for (unsigned int i = 0; i < width * height; i++)
+	{
+		perLaunchIdxRayBudgets[i * 4] = static_cast<unsigned char>(static_cast<unsigned int>(maxPerLaunchIdxRayBudget) + 1u);
+		perLaunchIdxRayBudgets[i * 4 + 1] = static_cast<unsigned char>(static_cast<unsigned int>(maxPerLaunchIdxRayBudget) + 1u);
+		perLaunchIdxRayBudgets[i * 4 + 2] = static_cast<unsigned char>(static_cast<unsigned int>(maxPerLaunchIdxRayBudget) + 1u);
+		perLaunchIdxRayBudgets[i * 4 + 3] = static_cast<unsigned char>(static_cast<unsigned int>(maxPerLaunchIdxRayBudget) + 1u);
+	}
+
+	// Additional rays test buffer setup
+	Buffer additional_rays_buffer = sutil::createInputOutputBuffer(context, RT_FORMAT_UNSIGNED_BYTE4, width, height, use_pbo);	// normally RT_FORMAT_UNSIGNED_BYTE would be enough, or RT_FORMAT_UNSIGNED_INT, 
+																																// depending on the magnitude of additional samples one plans to send, 
+																																// but i might want to visualize it
+	memcpy(additional_rays_buffer->map(), perLaunchIdxRayBudgets, sizeof(unsigned char) * width * height * 4);
+	additional_rays_buffer->unmap();
+	context["additional_rays_buffer"]->set(additional_rays_buffer);
+
+	delete[] perLaunchIdxRayBudgets;
 }
-
-// Additional rays variables (make a struct if necessary)
-//struct AddtionalAdaptiveRaysBuffer
-//{
-//	unsigned int maxPerLaunchIdxRayBudget;
-//	unsigned int** perLaunchIdxRayBudgets;
-//
-//	AddtionalAdaptiveRaysBuffer(const unsigned int maxRayBudget, const unsigned int width, const unsigned int height)
-//	{
-//		maxPerLaunchIdxRayBudget = maxRayBudget;
-//		for (unsigned int i = 0; i < width; i++)
-//		{
-//			for (unsigned int j = 0; j < width; j++)
-//			{
-//				perLaunchIdxRayBudgets[i][j] = maxPerLaunchIdxRayBudget+1;
-//			}
-//		}
-//	}
-//};
 
 int main(int argc, char* argv[])
 {
-    RTcontext context = 0;
-
     try { 
+        char outfile[1024];
 
-        /* Primary RTAPI objects */
-        RTprogram closest_hit_program;
-		
-		RTprogram pinhole_camera;
-		RTprogram exception;
-		RTprogram miss;
-
-        RTbuffer  buffer;
-		// Additional rays test buffer
-		RTbuffer  additional_rays_buffer;
-
-        /* Parameters */
-        RTvariable result_buffer;
-		// Additional rays test buffer
-		RTvariable additional_rays_buffer_variable;
-		RTvariable;
-        RTvariable draw_color;
-
-		RTvariable top_object;
-		RTvariable top_shadower;
-		RTvariable bg_color;
-		RTvariable bad_color;
-
-		RTvariable radiance_ray_type;
-		RTvariable shadow_ray_type;
-
-		RTvariable scene_epsylon;
-
-		RTvariable eye_variable;
-		RTvariable U_variable;
-		RTvariable V_variable;
-		RTvariable W_variable;
-
-        char outfile[800];
-
-        int width  = 800u;
-        int height = 600u;
+        int width2  = width;
+        int height2 = height;
         int i;
 
         outfile[0] = '\0';
@@ -232,177 +337,49 @@ int main(int argc, char* argv[])
                 }
             } else if ( strncmp( argv[i], "--dim=", 6 ) == 0 ) {
                 const char *dims_arg = &argv[i][6];
-                sutil::parseDimensions( dims_arg, width, height );
+                sutil::parseDimensions( dims_arg, width2, height2 );
             } else {
                 fprintf( stderr, "Unknown option '%s'\n", argv[i] );
                 printUsageAndExit( argv[0] );
             }
         }
 
-        /* Create our objects and set state */
-        RT_CHECK_ERROR( rtContextCreate( &context ) );
-        RT_CHECK_ERROR( rtContextSetRayTypeCount( context, 2 ) );
-        RT_CHECK_ERROR( rtContextSetEntryPointCount( context, 1 ) );
+		UsageReportLogger logger;
+		createContext(0, &logger);
 
-		// Enaple printing in .cu files
-		rtContextSetPrintEnabled(context, 1);
-		rtContextSetPrintBufferSize(context, 4096);
+		loadMesh("../bin/Data/sponza/sponza.obj");
+		setupCamera();
 
-		// Tutorial begin
-		const char *ptx = sutil::getPtxString("optixHello", "draw_color.cu");
-		RT_CHECK_ERROR(rtProgramCreateFromPTXString(context, ptx, "pinhole_camera", &pinhole_camera));
-		RT_CHECK_ERROR(rtContextSetRayGenerationProgram(context, 0u, pinhole_camera));
-		
-		RT_CHECK_ERROR(rtProgramCreateFromPTXString(context, ptx, "exception", &exception));
-		RT_CHECK_ERROR(rtContextSetMissProgram(context, 0u, exception));
+		setupLights();
 
-		RT_CHECK_ERROR(rtProgramCreateFromPTXString(context, ptx, "miss", &miss));
-		RT_CHECK_ERROR(rtContextSetMissProgram(context, 0u, miss));
-
-		// Tutorial variable declaration
-		RT_CHECK_ERROR(rtContextDeclareVariable(context, "top_object", &top_object));
-		RT_CHECK_ERROR(rtContextDeclareVariable(context, "top_shadower", &top_shadower));
-		RT_CHECK_ERROR(rtContextDeclareVariable(context, "bg_color", &bg_color));
-		RT_CHECK_ERROR(rtContextDeclareVariable(context, "bad_color", &bad_color));
-		RT_CHECK_ERROR(rtContextDeclareVariable(context, "radiance_ray_type", &radiance_ray_type));
-		RT_CHECK_ERROR(rtContextDeclareVariable(context, "shadow_ray_type", &shadow_ray_type));
-		RT_CHECK_ERROR(rtContextDeclareVariable(context, "scene_epsylon", &scene_epsylon));
-
-		RT_CHECK_ERROR(rtContextDeclareVariable(context, "eye", &eye_variable));
-		RT_CHECK_ERROR(rtContextDeclareVariable(context, "U", &U_variable));
-		RT_CHECK_ERROR(rtContextDeclareVariable(context, "V", &V_variable));
-		RT_CHECK_ERROR(rtContextDeclareVariable(context, "W", &W_variable));
-
-		// Tutorial variable set
-		RT_CHECK_ERROR(rtVariableSet3f(bg_color, 0.2f, 0.2f, 0.2f));
-		RT_CHECK_ERROR(rtVariableSet3f(bad_color, 1.0f, 1.0f, 0.0f));
-		RT_CHECK_ERROR(rtVariableSet1ui(radiance_ray_type, 0u));
-		RT_CHECK_ERROR(rtVariableSet1ui(shadow_ray_type, 1u));
-		RT_CHECK_ERROR(rtVariableSet1f(scene_epsylon, 1.e-4f));
-
-		cameraSetup();
-
-		RT_CHECK_ERROR(rtVariableSet3f(eye_variable, eye.x, eye.y, eye.z));
-		RT_CHECK_ERROR(rtVariableSet3f(U_variable, U.x, U.y, U.z));
-		RT_CHECK_ERROR(rtVariableSet3f(V_variable, V.x, V.y, V.z));
-		RT_CHECK_ERROR(rtVariableSet3f(W_variable, W.x, W.y, W.z));
-
-		// Tutorial geometry setup
-		const std::string filePath("../bin/Data/sponza/sponza.obj");
-		OptiXMesh mesh;
-		
-		RTgeometrygroup geometry_group;
-		RTacceleration acceleration;
-
-		RT_CHECK_ERROR(rtProgramCreateFromPTXString(context, ptx, "closest_hit_radiance0", &closest_hit_program));
-		RT_CHECK_ERROR(rtContextSetRayGenerationProgram(context, 0u, pinhole_camera));
-
-		mesh.context = Context::take(context);
-		mesh.closest_hit = Program::take(closest_hit_program);
-		loadMesh(filePath, mesh);
-
-		RT_CHECK_ERROR(rtGeometryGroupCreate(context, &geometry_group));
-
-		// IMPORTANT!!!: Use the Optix XPP wrapper for further proceeding
-		unsigned int index;
-		RT_CHECK_ERROR(rtGeometryGroupGetChildCount(geometry_group, &index));
-		RT_CHECK_ERROR(rtGeometryGroupSetChildCount(geometry_group, index + 1));
-		RT_CHECK_ERROR(rtGeometryGroupSetChild(geometry_group, index, mesh.geom_instance->get()));
-
-		RT_CHECK_ERROR(rtAccelerationCreate(context, &acceleration));
-		RT_CHECK_ERROR(rtAccelerationSetBuilder(acceleration, "Trbvh"));
-		RT_CHECK_ERROR(rtGeometryGroupSetAcceleration(geometry_group, acceleration));
-
-		
-		RT_CHECK_ERROR( rtVariableSetObject(top_object, geometry_group) );
-		RT_CHECK_ERROR(rtVariableSetObject(top_shadower, geometry_group));
-
-		BasicLight lights[] = 
-		{
-			{ make_float3(-0.5f,  0.25f, -1.0f), make_float3(0.2f, 0.2f, 0.25f), 0, 0 },
-			{ make_float3(-0.5f,  0.0f ,  1.0f), make_float3(0.1f, 0.1f, 0.10f), 0, 0 },
-			{ make_float3(0.5f,  0.5f ,  0.5f), make_float3(0.7f, 0.7f, 0.65f), 1, 0 }
-		};
-
-		RTbuffer light_buffer;
-		RT_CHECK_ERROR(rtBufferCreate(context, RT_BUFFER_INPUT, &light_buffer));
-		RT_CHECK_ERROR(rtBufferSetFormat(light_buffer, RT_FORMAT_USER));
-		RT_CHECK_ERROR(rtBufferSetElementSize(light_buffer, sizeof(BasicLight)));
-		RT_CHECK_ERROR(rtBufferSetSize1D(light_buffer, sizeof(lights) / sizeof(lights[0])));
-		void* lightData = nullptr;
-		RT_CHECK_ERROR(rtBufferMap(light_buffer, &lightData));
-		memcpy(lightData, lights, sizeof(lights));
-		rtBufferUnmap(light_buffer);
-		//light_buffer->unmap();
-		RTvariable lights_variable;
-		RT_CHECK_ERROR(rtContextDeclareVariable(context, "lights", &lights_variable));
-
-		RT_CHECK_ERROR(rtVariableSetObject(lights_variable, light_buffer));
-
-		// Tutorial end!
-        RT_CHECK_ERROR( rtBufferCreate( context, RT_BUFFER_OUTPUT, &buffer ) );
-		RT_CHECK_ERROR(rtBufferSetFormat(buffer, RT_FORMAT_UNSIGNED_BYTE4));
-        RT_CHECK_ERROR( rtBufferSetSize2D( buffer, width, height ) );
-		RT_CHECK_ERROR(rtContextDeclareVariable(context, "output_buffer", &result_buffer));
-        RT_CHECK_ERROR( rtVariableSetObject( result_buffer, buffer ) );
-
-		// additional max ray budget and rays buffer
-		unsigned char maxPerLaunchIdxRayBudget = static_cast<unsigned char>(5u);
-		unsigned char* perLaunchIdxRayBudgets = new unsigned char[width * height * 4];
-
-		// initialize additional rays buffer
-		for (unsigned int i = 0; i < width * height; i++)
-		{
-			perLaunchIdxRayBudgets[i * 4] = static_cast<unsigned char>(static_cast<unsigned int>(maxPerLaunchIdxRayBudget) + 1u);
-			perLaunchIdxRayBudgets[i * 4 + 1] = static_cast<unsigned char>(static_cast<unsigned int>(maxPerLaunchIdxRayBudget) + 1u);
-			perLaunchIdxRayBudgets[i * 4 + 2] = static_cast<unsigned char>(static_cast<unsigned int>(maxPerLaunchIdxRayBudget) + 1u);
-			perLaunchIdxRayBudgets[i * 4 + 3] = static_cast<unsigned char>(static_cast<unsigned int>(maxPerLaunchIdxRayBudget) + 1u);
-		}
-
-		// Additional rays test buffer setup
-		RT_CHECK_ERROR(rtBufferCreate(context, RT_BUFFER_INPUT_OUTPUT, &additional_rays_buffer));
-		RT_CHECK_ERROR(rtBufferSetFormat(additional_rays_buffer, RT_FORMAT_UNSIGNED_BYTE4));	// normally RT_FORMAT_UNSIGNED_BYTE would be enough, or RT_FORMAT_UNSIGNED_INT, 
-																								// depending on the magnitude of additional samples one plans to send, 
-																								// but i might want to visualize it
-		RT_CHECK_ERROR(rtBufferSetSize2D(additional_rays_buffer, width, height));
-
-		int a = sizeof(perLaunchIdxRayBudgets);
-
-		void* additionalRaysData = nullptr;
-		RT_CHECK_ERROR(rtBufferMap(additional_rays_buffer, &additionalRaysData));
-		memcpy(additionalRaysData, perLaunchIdxRayBudgets, sizeof(unsigned char) * width * height * 4);
-		rtBufferUnmap(additional_rays_buffer);
-
-		RT_CHECK_ERROR(rtContextDeclareVariable(context, "additional_rays_buffer", &additional_rays_buffer_variable));
-		RT_CHECK_ERROR(rtVariableSetObject(additional_rays_buffer_variable, additional_rays_buffer));
-
-		RT_CHECK_ERROR( rtProgramDeclareVariable( pinhole_camera, "draw_color", &draw_color ) );
-		RT_CHECK_ERROR( rtVariableSet3f( draw_color, 0.462f, 0.725f, 0.0f ) );
+		setupAdditionalRaysBuffer();
 
         /* Run */
-        RT_CHECK_ERROR( rtContextValidate( context ) );
-        RT_CHECK_ERROR( rtContextLaunch2D( context, 0 /* entry point */, width, height ) );
+		context->validate();
+		context->launch(0, width, height);
 
         /* Display image */
         if( strlen( outfile ) == 0 ) {
-            sutil::displayBufferGlut( argv[0], buffer );
+            sutil::displayBufferGlut( argv[0], getOutputBuffer() );
         } else {
-            sutil::displayBufferPPM( outfile, buffer, false);
+            sutil::displayBufferPPM( outfile, getOutputBuffer(), false);
         }
 
         /* Clean up */
-        RT_CHECK_ERROR( rtBufferDestroy( buffer ) );
-		RT_CHECK_ERROR( rtProgramDestroy( pinhole_camera ) );
-		RT_CHECK_ERROR( rtProgramDestroy( closest_hit_program ) );
-		RT_CHECK_ERROR( rtProgramDestroy( miss ) );
-		RT_CHECK_ERROR( rtProgramDestroy( exception) );
-        RT_CHECK_ERROR( rtContextDestroy( context ) );
+  //      RT_CHECK_ERROR( rtBufferDestroy( buffer ) );
+		//RT_CHECK_ERROR( rtProgramDestroy( pinhole_camera ) );
+		//RT_CHECK_ERROR( rtProgramDestroy( closest_hit_program ) );
+		//RT_CHECK_ERROR( rtProgramDestroy( miss ) );
+		//RT_CHECK_ERROR( rtProgramDestroy( exception) );
+  //      RT_CHECK_ERROR( rtContextDestroy( context ) );
 
-		delete[] perLaunchIdxRayBudgets;
+		destroyContext();
+
+		//delete[] perLaunchIdxRayBudgets;
 
         return( 0 );
 
-    } SUTIL_CATCH( context )
+    } SUTIL_CATCH( context->get() )
 }
 
 
@@ -414,5 +391,3 @@ void printUsageAndExit( const char* argv0 )
   fprintf( stderr, "         --dim=<width>x<height>      Set image dimensions; defaults to 512x384\n" );
   exit(1);
 }
-
-

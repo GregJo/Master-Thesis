@@ -323,12 +323,16 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
       <Project>{BB3D2BF4-6136-340E-989B-9C70DA1DC56C}</Project>
       <Name>ZERO_CHECK</Name>
     </ProjectReference>
-  </ItemGroup>
-  <ItemGroup>
-    <None Include="..\src\optixHello\draw_color.cu" />
+    <ProjectReference Include="C:\Users\Greg\Documents\Visual Studio 2015\Projects\Optix_Samples_Build\sutil\sutil_sdk.vcxproj">
+      <Project>{22518D0C-B415-38CA-94FD-CF5536FD1B25}</Project>
+      <Name>sutil_sdk</Name>
+    </ProjectReference>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\src\optixHello\optixHello.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="..\src\optixHello\draw_color.cu" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

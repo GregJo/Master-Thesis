@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="UTF-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" ToolsVersion="14.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|x64">
@@ -56,13 +56,13 @@
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup>
     <_ProjectFileVersion>10.0.20506.1</_ProjectFileVersion>
-    <OutDir Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:\Users\Greg\Documents\Visual Studio 2015\Projects\Optix_Samples_Build\bin\Debug\</OutDir>
+    <OutDir Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:\Users\Greg\Documents\Visual Studio 2015\Projects\Master-Thesis\bin\Debug\</OutDir>
     <IntDir Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">sutil_sdk.dir\Debug\</IntDir>
     <TargetName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">sutil_sdk</TargetName>
     <TargetExt Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">.dll</TargetExt>
     <LinkIncremental Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</LinkIncremental>
     <GenerateManifest Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</GenerateManifest>
-    <OutDir Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:\Users\Greg\Documents\Visual Studio 2015\Projects\Optix_Samples_Build\bin\Release\</OutDir>
+    <OutDir Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:\Users\Greg\Documents\Visual Studio 2015\Projects\Master-Thesis\bin\Release\</OutDir>
     <IntDir Condition="'$(Configuration)|$(Platform)'=='Release|x64'">sutil_sdk.dir\Release\</IntDir>
     <TargetName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">sutil_sdk</TargetName>
     <TargetExt Condition="'$(Configuration)|$(Platform)'=='Release|x64'">.dll</TargetExt>
@@ -83,7 +83,7 @@
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
-      <AdditionalIncludeDirectories>C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\include;C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\sutil;C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK;C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\include\optixu;C:\Users\Greg\Documents\Visual Studio 2015\Projects\Optix_Samples_Build;C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v8.0\include;C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\support\freeglut\include;C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\cuda;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\include;C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\include\optixu;C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v8.0\include;C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\support\freeglut\include;C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\cuda;C:\Users\Greg\Documents\Visual Studio 2015\Projects\Master-Thesis\src\sutil\LodePNG;C:\Users\Greg\Documents\Visual Studio 2015\Projects\Master-Thesis\src\sutil;C:\Users\Greg\Documents\Visual Studio 2015\Projects\Master-Thesis;C:\Users\Greg\Documents\Visual Studio 2015\Projects\Master-Thesis\Master-Thesis;C:\Users\Greg\Documents\Visual Studio 2015\Projects\Master-Thesis\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AssemblerListingLocation>Debug/</AssemblerListingLocation>
       <BasicRuntimeChecks>EnableFastChecks</BasicRuntimeChecks>
       <CompileAs>CompileAsCpp</CompileAs>
@@ -113,7 +113,8 @@
       <ProxyFileName>%(Filename)_p.c</ProxyFileName>
     </Midl>
     <PostBuildEvent>
-      <Message></Message>
+      <Message>
+      </Message>
       <Command>setlocal
 "C:\Program Files\CMake\bin\cmake.exe" -D build_configuration:STRING=$(ConfigurationName) -D "output_directory:PATH=C:/Users/Greg/Documents/Visual Studio 2015/Projects/Optix_Samples_Build/bin/$(Configuration)" -D "source_dll:FILE=C:/ProgramData/NVIDIA Corporation/OptiX SDK 5.0.1/SDK/support/freeglut/win64/Release/freeglut.dll" -P "C:/ProgramData/NVIDIA Corporation/OptiX SDK 5.0.1/SDK/CMake/CopyDLL.cmake"
 if %errorlevel% neq 0 goto :cmEnd
@@ -140,7 +141,7 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
-      <AdditionalIncludeDirectories>C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\include;C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\sutil;C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK;C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\include\optixu;C:\Users\Greg\Documents\Visual Studio 2015\Projects\Optix_Samples_Build;C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v8.0\include;C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\support\freeglut\include;C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\cuda;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\include;C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK;C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\include\optixu;C:\Users\Greg\Documents\Visual Studio 2015\Projects\Optix_Samples_Build;C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v8.0\include;C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\support\freeglut\include;C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\cuda;C:\Users\Greg\Documents\Visual Studio 2015\Projects\Master-Thesis\src\sutil\LodePNG;C:\Users\Greg\Documents\Visual Studio 2015\Projects\Master-Thesis\src\sutil;C:\Users\Greg\Documents\Visual Studio 2015\Projects\Master-Thesis;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AssemblerListingLocation>Release/</AssemblerListingLocation>
       <CompileAs>CompileAsCpp</CompileAs>
       <DisableSpecificWarnings>4355;4996</DisableSpecificWarnings>
@@ -156,7 +157,8 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
       <WarningLevel>Level3</WarningLevel>
       <PreprocessorDefinitions>WIN32;_WINDOWS;NDEBUG;_USE_MATH_DEFINES;NOMINMAX;GLEW_BUILD;GLUT_FOUND;GLUT_NO_LIB_PRAGMA;CMAKE_INTDIR="Release";sutil_sdk_EXPORTS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ObjectFileName>$(IntDir)</ObjectFileName>
-      <DebugInformationFormat></DebugInformationFormat>
+      <DebugInformationFormat>
+      </DebugInformationFormat>
     </ClCompile>
     <ResourceCompile>
       <PreprocessorDefinitions>WIN32;_WINDOWS;NDEBUG;_USE_MATH_DEFINES;NOMINMAX;GLEW_BUILD;GLUT_FOUND;GLUT_NO_LIB_PRAGMA;CMAKE_INTDIR=\"Release\";sutil_sdk_EXPORTS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
@@ -171,7 +173,8 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
       <ProxyFileName>%(Filename)_p.c</ProxyFileName>
     </Midl>
     <PostBuildEvent>
-      <Message></Message>
+      <Message>
+      </Message>
       <Command>setlocal
 "C:\Program Files\CMake\bin\cmake.exe" -D build_configuration:STRING=$(ConfigurationName) -D "output_directory:PATH=C:/Users/Greg/Documents/Visual Studio 2015/Projects/Optix_Samples_Build/bin/$(Configuration)" -D "source_dll:FILE=C:/ProgramData/NVIDIA Corporation/OptiX SDK 5.0.1/SDK/support/freeglut/win64/Release/freeglut.dll" -P "C:/ProgramData/NVIDIA Corporation/OptiX SDK 5.0.1/SDK/CMake/CopyDLL.cmake"
 if %errorlevel% neq 0 goto :cmEnd
@@ -198,7 +201,7 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">
     <ClCompile>
-      <AdditionalIncludeDirectories>C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\include;C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\sutil;C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK;C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\include\optixu;C:\Users\Greg\Documents\Visual Studio 2015\Projects\Optix_Samples_Build;C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v8.0\include;C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\support\freeglut\include;C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\cuda;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\include;C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK;C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\include\optixu;C:\Users\Greg\Documents\Visual Studio 2015\Projects\Optix_Samples_Build;C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v8.0\include;C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\support\freeglut\include;C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\cuda;C:\Users\Greg\Documents\Visual Studio 2015\Projects\Master-Thesis\src\sutil\LodePNG;C:\Users\Greg\Documents\Visual Studio 2015\Projects\Master-Thesis\src\sutil;C:\Users\Greg\Documents\Visual Studio 2015\Projects\Master-Thesis;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AssemblerListingLocation>MinSizeRel/</AssemblerListingLocation>
       <CompileAs>CompileAsCpp</CompileAs>
       <DisableSpecificWarnings>4355;4996</DisableSpecificWarnings>
@@ -212,7 +215,8 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
       <WarningLevel>Level3</WarningLevel>
       <PreprocessorDefinitions>WIN32;_WINDOWS;NDEBUG;_USE_MATH_DEFINES;NOMINMAX;GLEW_BUILD;GLUT_FOUND;GLUT_NO_LIB_PRAGMA;CMAKE_INTDIR="MinSizeRel";sutil_sdk_EXPORTS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ObjectFileName>$(IntDir)</ObjectFileName>
-      <DebugInformationFormat></DebugInformationFormat>
+      <DebugInformationFormat>
+      </DebugInformationFormat>
     </ClCompile>
     <ResourceCompile>
       <PreprocessorDefinitions>WIN32;_WINDOWS;NDEBUG;_USE_MATH_DEFINES;NOMINMAX;GLEW_BUILD;GLUT_FOUND;GLUT_NO_LIB_PRAGMA;CMAKE_INTDIR=\"MinSizeRel\";sutil_sdk_EXPORTS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
@@ -227,7 +231,8 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
       <ProxyFileName>%(Filename)_p.c</ProxyFileName>
     </Midl>
     <PostBuildEvent>
-      <Message></Message>
+      <Message>
+      </Message>
       <Command>setlocal
 "C:\Program Files\CMake\bin\cmake.exe" -D build_configuration:STRING=$(ConfigurationName) -D "output_directory:PATH=C:/Users/Greg/Documents/Visual Studio 2015/Projects/Optix_Samples_Build/bin/$(Configuration)" -D "source_dll:FILE=C:/ProgramData/NVIDIA Corporation/OptiX SDK 5.0.1/SDK/support/freeglut/win64/Release/freeglut.dll" -P "C:/ProgramData/NVIDIA Corporation/OptiX SDK 5.0.1/SDK/CMake/CopyDLL.cmake"
 if %errorlevel% neq 0 goto :cmEnd
@@ -254,7 +259,7 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">
     <ClCompile>
-      <AdditionalIncludeDirectories>C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\include;C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\sutil;C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK;C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\include\optixu;C:\Users\Greg\Documents\Visual Studio 2015\Projects\Optix_Samples_Build;C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v8.0\include;C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\support\freeglut\include;C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\cuda;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\include;C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK;C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\include\optixu;C:\Users\Greg\Documents\Visual Studio 2015\Projects\Optix_Samples_Build;C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v8.0\include;C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\support\freeglut\include;C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\cuda;C:\Users\Greg\Documents\Visual Studio 2015\Projects\Master-Thesis\src\sutil\LodePNG;C:\Users\Greg\Documents\Visual Studio 2015\Projects\Master-Thesis\src\sutil;C:\Users\Greg\Documents\Visual Studio 2015\Projects\Master-Thesis;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AssemblerListingLocation>RelWithDebInfo/</AssemblerListingLocation>
       <CompileAs>CompileAsCpp</CompileAs>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
@@ -283,7 +288,8 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
       <ProxyFileName>%(Filename)_p.c</ProxyFileName>
     </Midl>
     <PostBuildEvent>
-      <Message></Message>
+      <Message>
+      </Message>
       <Command>setlocal
 "C:\Program Files\CMake\bin\cmake.exe" -D build_configuration:STRING=$(ConfigurationName) -D "output_directory:PATH=C:/Users/Greg/Documents/Visual Studio 2015/Projects/Optix_Samples_Build/bin/$(Configuration)" -D "source_dll:FILE=C:/ProgramData/NVIDIA Corporation/OptiX SDK 5.0.1/SDK/support/freeglut/win64/Release/freeglut.dll" -P "C:/ProgramData/NVIDIA Corporation/OptiX SDK 5.0.1/SDK/CMake/CopyDLL.cmake"
 if %errorlevel% neq 0 goto :cmEnd
@@ -365,44 +371,37 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
     </CustomBuild>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\cuda\commonStructs.h" />
-    <ClInclude Include="C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\cuda\helpers.h" />
-    <ClInclude Include="C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\cuda\intersection_refinement.h" />
-    <ClInclude Include="C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\cuda\phong.h" />
+    <ClCompile Include="..\src\sutil\rply-1.01\rply.c" />
+    <ClCompile Include="..\src\sutil\tinyobjloader\tiny_obj_loader.cc" />
+    <ClInclude Include="..\Master-Thesis\sampleConfig.h" />
+    <ClInclude Include="..\src\cuda\commonStructs.h" />
+    <ClInclude Include="..\src\cuda\helpers.h" />
+    <ClInclude Include="..\src\cuda\intersection_refinement.h" />
+    <ClInclude Include="..\src\cuda\phong.h" />
+    <ClInclude Include="..\src\cuda\random.h" />
+    <ClInclude Include="..\src\sutil\Arcball.h" />
+    <ClInclude Include="..\src\sutil\GL\glew.h" />
+    <ClInclude Include="..\src\sutil\GL\wglew.h" />
+    <ClInclude Include="..\src\sutil\HDRLoader.h" />
+    <ClInclude Include="..\src\sutil\Mesh.h" />
+    <ClInclude Include="..\src\sutil\OptiXMesh.h" />
+    <ClInclude Include="..\src\sutil\PNGLoader.h" />
     <None Include="C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\cuda\phong.cu" />
-    <ClInclude Include="C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\cuda\random.h" />
+    <ClInclude Include="..\src\sutil\PPMLoader.h" />
     <None Include="C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\cuda\triangle_mesh.cu" />
-    <ClCompile Include="C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\sutil\rply-1.01\rply.c" >
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsC</CompileAs>
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">CompileAsC</CompileAs>
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">CompileAsC</CompileAs>
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">CompileAsC</CompileAs>
-    </ClCompile>
-    <ClInclude Include="C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\sutil\rply-1.01\rply.h" />
-    <ClCompile Include="C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\sutil\Arcball.cpp"  />
-    <ClInclude Include="C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\sutil\Arcball.h" />
-    <ClCompile Include="C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\sutil\HDRLoader.cpp"  />
-    <ClInclude Include="C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\sutil\HDRLoader.h" />
-    <ClCompile Include="C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\sutil\Mesh.cpp"  />
-    <ClInclude Include="C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\sutil\Mesh.h" />
-    <ClCompile Include="C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\sutil\OptiXMesh.cpp"  />
-    <ClInclude Include="C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\sutil\OptiXMesh.h" />
-    <ClCompile Include="C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\sutil\PPMLoader.cpp"  />
-    <ClInclude Include="C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\sutil\PPMLoader.h" />
-    <ClInclude Include="C:\Users\Greg\Documents\Visual Studio 2015\Projects\Optix_Samples_Build\sampleConfig.h" />
-    <ClCompile Include="C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\sutil\sutil.cpp"  />
-    <ClInclude Include="C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\sutil\sutil.h" />
-    <ClInclude Include="C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\sutil\sutilapi.h" />
-    <ClCompile Include="C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\sutil\tinyobjloader\tiny_obj_loader.cc"  />
-    <ClInclude Include="C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\sutil\tinyobjloader\tiny_obj_loader.h" />
-    <ClCompile Include="C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\sutil\glew.c" >
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsC</CompileAs>
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">CompileAsC</CompileAs>
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">CompileAsC</CompileAs>
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">CompileAsC</CompileAs>
-    </ClCompile>
-    <ClInclude Include="C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\sutil\GL\glew.h" />
-    <ClInclude Include="C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\sutil\GL\wglew.h" />
+    <ClCompile Include="..\src\sutil\Arcball.cpp" />
+    <ClCompile Include="..\src\sutil\glew.c" />
+    <ClCompile Include="..\src\sutil\HDRLoader.cpp" />
+    <ClCompile Include="..\src\sutil\LodePNG\lodepng.cpp" />
+    <ClCompile Include="..\src\sutil\Mesh.cpp" />
+    <ClCompile Include="..\src\sutil\OptiXMesh.cpp" />
+    <ClCompile Include="..\src\sutil\PNGLoader.cpp" />
+    <ClCompile Include="..\src\sutil\PPMLoader.cpp" />
+    <ClInclude Include="..\src\sutil\rply-1.01\rply.h" />
+    <ClInclude Include="..\src\sutil\sutil.h" />
+    <ClCompile Include="..\src\sutil\sutil.cpp" />
+    <ClInclude Include="..\src\sutil\sutilapi.h" />
+    <ClInclude Include="..\src\sutil\tinyobjloader\tiny_obj_loader.h" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="C:\Users\Greg\Documents\Visual Studio 2015\Projects\Optix_Samples_Build\ZERO_CHECK.vcxproj">

@@ -1,84 +1,93 @@
-﻿<?xml version="1.0" encoding="UTF-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="14.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
-    <ClCompile Include="C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\sutil\rply-1.01\rply.c">
+    <ClCompile Include="..\src\sutil\PNGLoader.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\sutil\Arcball.cpp">
+    <ClCompile Include="..\src\sutil\LodePNG\lodepng.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\sutil\HDRLoader.cpp">
+    <ClCompile Include="..\src\sutil\Arcball.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\sutil\Mesh.cpp">
+    <ClCompile Include="..\src\sutil\glew.c">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\sutil\OptiXMesh.cpp">
+    <ClCompile Include="..\src\sutil\HDRLoader.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\sutil\PPMLoader.cpp">
+    <ClCompile Include="..\src\sutil\Mesh.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\sutil\sutil.cpp">
+    <ClCompile Include="..\src\sutil\OptiXMesh.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\sutil\tinyobjloader\tiny_obj_loader.cc">
+    <ClCompile Include="..\src\sutil\PPMLoader.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\sutil\glew.c">
+    <ClCompile Include="..\src\sutil\sutil.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\sutil\tinyobjloader\tiny_obj_loader.cc">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\sutil\rply-1.01\rply.c">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\cuda\commonStructs.h">
+    <ClInclude Include="..\src\sutil\PNGLoader.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\cuda\helpers.h">
+    <ClInclude Include="..\src\sutil\Arcball.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\cuda\intersection_refinement.h">
+    <ClInclude Include="..\src\cuda\commonStructs.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\cuda\phong.h">
+    <ClInclude Include="..\src\sutil\GL\glew.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\cuda\random.h">
+    <ClInclude Include="..\src\sutil\HDRLoader.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\sutil\rply-1.01\rply.h">
+    <ClInclude Include="..\src\cuda\helpers.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\sutil\Arcball.h">
+    <ClInclude Include="..\src\cuda\intersection_refinement.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\sutil\HDRLoader.h">
+    <ClInclude Include="..\src\sutil\Mesh.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\sutil\Mesh.h">
+    <ClInclude Include="..\src\sutil\OptiXMesh.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\sutil\OptiXMesh.h">
+    <ClInclude Include="..\src\cuda\phong.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\sutil\PPMLoader.h">
+    <ClInclude Include="..\src\sutil\PPMLoader.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="C:\Users\Greg\Documents\Visual Studio 2015\Projects\Optix_Samples_Build\sampleConfig.h">
+    <ClInclude Include="..\src\cuda\random.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\sutil\sutil.h">
+    <ClInclude Include="..\Master-Thesis\sampleConfig.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\sutil\sutilapi.h">
+    <ClInclude Include="..\src\sutil\sutil.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\sutil\tinyobjloader\tiny_obj_loader.h">
+    <ClInclude Include="..\src\sutil\sutilapi.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\sutil\GL\glew.h">
+    <ClInclude Include="..\src\sutil\tinyobjloader\tiny_obj_loader.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\sutil\GL\wglew.h">
+    <ClInclude Include="..\src\sutil\GL\wglew.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\sutil\rply-1.01\rply.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

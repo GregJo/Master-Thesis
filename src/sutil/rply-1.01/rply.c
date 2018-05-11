@@ -1018,9 +1018,9 @@ static void ply_element_init(p_ply_element element) {
 
 static void ply_property_init(p_ply_property property) {
     property->name[0] = '\0';
-    property->type = -1;
-    property->length_type = -1;
-    property->value_type = -1;
+    property->type = (e_ply_type) (-1);
+    property->length_type = (e_ply_type)(-1);
+    property->value_type = (e_ply_type)(-1);
     property->read_cb = (p_ply_read_cb) NULL;
     property->pdata = NULL;
     property->idata = 0;
@@ -1080,7 +1080,7 @@ static int ply_read_header_format(p_ply ply) {
     assert(ply && ply->fp && ply->io_mode == PLY_READ);
     if (strcmp(BWORD(ply), "format")) return 0;
     if (!ply_read_word(ply)) return 0;
-    ply->storage_mode = ply_find_string(BWORD(ply), ply_storage_mode_list);
+    ply->storage_mode = (e_ply_storage_mode) (ply_find_string(BWORD(ply), ply_storage_mode_list));
     if (ply->storage_mode == (e_ply_storage_mode) (-1)) return 0;
     if (ply->storage_mode == PLY_ASCII) ply->idriver = &ply_idriver_ascii;
     else if (ply->storage_mode == ply_arch_endian()) 
@@ -1120,15 +1120,15 @@ static int ply_read_header_property(p_ply ply) {
     if (!property) return 0;
     /* get property type */
     if (!ply_read_word(ply)) return 0;
-    property->type = ply_find_string(BWORD(ply), ply_type_list);
+    property->type = (e_ply_type) (ply_find_string(BWORD(ply), ply_type_list));
     if (property->type == (e_ply_type) (-1)) return 0;
     if (property->type == PLY_LIST) {
         /* if it's a list, we need the base types */
         if (!ply_read_word(ply)) return 0;
-        property->length_type = ply_find_string(BWORD(ply), ply_type_list);
+        property->length_type = (e_ply_type) (ply_find_string(BWORD(ply), ply_type_list));
         if (property->length_type == (e_ply_type) (-1)) return 0;
         if (!ply_read_word(ply)) return 0;
-        property->value_type = ply_find_string(BWORD(ply), ply_type_list);
+        property->value_type = (e_ply_type)(ply_find_string(BWORD(ply), ply_type_list));
         if (property->value_type == (e_ply_type) (-1)) return 0;
     }
     /* get property name */
