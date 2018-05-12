@@ -371,7 +371,12 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
     </CustomBuild>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="..\src\sutil\rply-1.01\rply.c" />
+    <ClCompile Include="..\src\sutil\rply-1.01\rply.c">
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsC</CompileAs>
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">CompileAsC</CompileAs>
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">CompileAsC</CompileAs>
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">CompileAsC</CompileAs>
+    </ClCompile>
     <ClCompile Include="..\src\sutil\tinyobjloader\tiny_obj_loader.cc" />
     <ClInclude Include="..\Master-Thesis\sampleConfig.h" />
     <ClInclude Include="..\src\cuda\commonStructs.h" />

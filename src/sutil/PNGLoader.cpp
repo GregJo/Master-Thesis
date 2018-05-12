@@ -35,12 +35,12 @@ PNGLoader::PNGLoader(const std::string& filename, const LodePNGColorType PNGcolo
 	//
 	// Following two values for now hardcoded, to esure an easy data copy implementation between host and device buffer in the "loadTexture( ... )" function
 	//
-	channels = 4;
-	LodePNGColorType PNGcolorType2 = LCT_RGBA;
+	channels = 3;
+	LodePNGColorType PNGcolorType2 = LCT_RGB;
 
 	std::vector<unsigned char> out;
 
-	decode(out, m_nx, m_ny, filename);
+	//decode(out, m_nx, m_ny, filename);
 
 	State state; //optionally customize this one
 
@@ -85,7 +85,7 @@ unsigned char* PNGLoader::raster() const
 }
 
 SUTILAPI optix::TextureSampler PNGLoader::loadTexture(optix::Context context,
-											const optix::float3& default_color)
+	const optix::float3& default_color)
 {
 	// Create tex sampler and populate with default values
 	optix::TextureSampler sampler = context->createTextureSampler();
@@ -134,7 +134,8 @@ SUTILAPI optix::TextureSampler PNGLoader::loadTexture(optix::Context context,
 			buffer_data[buf_index + 0] = raster()[ppm_index + 0];
 			buffer_data[buf_index + 1] = raster()[ppm_index + 1];
 			buffer_data[buf_index + 2] = raster()[ppm_index + 2];
-			buffer_data[buf_index + 3] = raster()[ppm_index + 3];
+			buffer_data[buf_index + 3] = 255;
+			//buffer_data[buf_index + 3] = raster()[ppm_index + 3];
 		}
 	}
 
@@ -153,7 +154,7 @@ SUTILAPI optix::TextureSampler PNGLoader::loadTexture(optix::Context context,
 optix::TextureSampler loadPNGTexture(optix::Context context,
 	const std::string& filename,
 	const optix::float3& default_color,
-	const LodePNGColorType PNGColorType )
+	const LodePNGColorType PNGColorType)
 {
 	PNGLoader png(filename, PNGColorType);
 	return png.loadTexture(context, default_color);
