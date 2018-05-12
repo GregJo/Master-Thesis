@@ -7,6 +7,8 @@
 
 #include <lodepng.h>
 
+#include <iostream>
+#include <fstream>
 //
 // Utility Functions
 //
@@ -38,4 +40,12 @@ private:
 	unsigned int   m_nx;
 	unsigned int   m_ny;
 	unsigned char* m_raster;
+
+	unsigned int m_channels;
 };
+
+//
+// Helper functions
+//
+
+std::vector<unsigned char> readFile(const std::string& filename);

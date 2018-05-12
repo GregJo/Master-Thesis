@@ -11,44 +11,45 @@ using namespace lodepng;
 PNGLoader::PNGLoader(const std::string& filename, const LodePNGColorType PNGcolorType) : m_raster(nullptr), m_nx(0), m_ny(0)
 {
 	if (filename.empty()) return;
-
-	unsigned int channels = -1;
-	switch (PNGcolorType)
-	{
-	case LCT_GREY:
-		channels = 1;
-		break;
-	case LCT_RGB:
-		channels = 3;
-		break;
-	case LCT_PALETTE:
-		channels = 1;
-		break;
-	case LCT_GREY_ALPHA:
-		channels = 2;
-		break;
-	case LCT_RGBA:
-		channels = 4;
-		break;
-	}
-
-	//
-	// Following two values for now hardcoded, to esure an easy data copy implementation between host and device buffer in the "loadTexture( ... )" function
-	//
-	channels = 3;
-	LodePNGColorType PNGcolorType2 = LCT_RGB;
+	size_t suffix_pos = filename.find_last_of(".");
+	std::string filename_suffix = filename.substr(suffix_pos + 1);
+	std::cout << "Filename suffix: " << filename_suffix << std::endl;
+	if (filename_suffix != "png") return;
 
 	std::vector<unsigned char> out;
 
-	//decode(out, m_nx, m_ny, filename);
+	std::vector<unsigned char> raw_data = readFile(filename);
 
-	State state; //optionally customize this one
+	lodepng::State state; //optionally customize this one
 
-	unsigned error = decode(out, m_nx, m_ny, filename, PNGcolorType2);
+	unsigned error = lodepng::decode(out, m_nx, m_ny, state, raw_data);
+	std::cout << "Size of out vector: " << out.size() << std::endl;
 	if (!error)
 	{
-		m_raster = new unsigned char[m_nx * m_ny * channels];
-		memcpy(m_raster, out.data(), m_nx * m_ny * channels);
+		m_channels = -1;
+		switch (state.info_png.color.colortype)
+		{
+		case LCT_GREY:
+			m_channels = 1;
+			break;
+		case LCT_RGB:
+			m_channels = 3;
+			break;
+		case LCT_PALETTE:
+			m_channels = 1;
+			break;
+		case LCT_GREY_ALPHA:
+			m_channels = 2;
+			break;
+		case LCT_RGBA:
+			m_channels = 4;
+			break;
+		}
+		m_raster = new unsigned char[m_nx * m_ny * m_channels];
+		memcpy(m_raster, out.data(), m_nx * m_ny * m_channels);
+
+		std::cout << "Size from width, height and channels: " << m_nx * m_ny * m_channels << std::endl;
+		std::cout << "Channels: " << m_channels << std::endl;
 	}
 	else
 	{
@@ -125,17 +126,46 @@ SUTILAPI optix::TextureSampler PNGLoader::loadTexture(optix::Context context,
 	optix::Buffer buffer = context->createBuffer(RT_BUFFER_INPUT, RT_FORMAT_UNSIGNED_BYTE4, nx, ny);
 	unsigned char* buffer_data = static_cast<unsigned char*>(buffer->map());
 
+	unsigned char r, g, b, a = 0;
 	for (unsigned int i = 0; i < nx; ++i) {
 		for (unsigned int j = 0; j < ny; ++j) {
 
 			unsigned int ppm_index = ((ny - j - 1)*nx + i) * 3;
 			unsigned int buf_index = ((j)*nx + i) * 4;
 
-			buffer_data[buf_index + 0] = raster()[ppm_index + 0];
-			buffer_data[buf_index + 1] = raster()[ppm_index + 1];
-			buffer_data[buf_index + 2] = raster()[ppm_index + 2];
-			buffer_data[buf_index + 3] = 255;
-			//buffer_data[buf_index + 3] = raster()[ppm_index + 3];
+			switch (m_channels) 
+			{
+				case 1:
+					r = raster()[ppm_index + 0];
+					g = raster()[ppm_index + 0];
+					b = raster()[ppm_index + 0];
+					a = 255;
+					break;
+				case 2: 
+					r = raster()[ppm_index + 0];
+					g = raster()[ppm_index + 1];
+					b = raster()[ppm_index + 1];
+					a = 255;
+					break;
+				case 3:
+					r = raster()[ppm_index + 0];
+					g = raster()[ppm_index + 1];
+					b = raster()[ppm_index + 2];
+					a = 255;
+					break;
+				case 4:
+					r = raster()[ppm_index + 0];
+					g = raster()[ppm_index + 1];
+					b = raster()[ppm_index + 2];
+					a = raster()[ppm_index + 3];
+					break;
+				case -1: break;
+			}
+
+			buffer_data[buf_index + 0] = r;
+			buffer_data[buf_index + 1] = g;
+			buffer_data[buf_index + 2] = b;
+			buffer_data[buf_index + 3] = a;
 		}
 	}
 
@@ -148,7 +178,7 @@ SUTILAPI optix::TextureSampler PNGLoader::loadTexture(optix::Context context,
 }
 
 //  
-//  Utility functions 
+//  Utility functions definitions
 //
 
 optix::TextureSampler loadPNGTexture(optix::Context context,
@@ -158,4 +188,70 @@ optix::TextureSampler loadPNGTexture(optix::Context context,
 {
 	PNGLoader png(filename, PNGColorType);
 	return png.loadTexture(context, default_color);
+}
+
+//
+// Helper functions definitions
+//
+
+std::vector<unsigned char> readFile(const std::string& filename)
+{
+	// Init
+	std::ifstream* pFile = new std::ifstream();
+
+	bool fileOpenSuccess = true;
+	// Open
+	pFile->open(filename, std::ios::in | std::ios::binary);
+	if (!pFile->is_open())
+	{
+		fileOpenSuccess = false;
+	}
+
+	if (fileOpenSuccess)
+	{
+		// File size in bytes
+		// get current position
+		std::streampos curr = pFile->tellg();
+
+		std::streampos begin = pFile->tellg();
+		pFile->seekg(0, std::ios::end);
+		std::streampos end = pFile->tellg();
+
+		// restore position
+		pFile->seekg(curr, std::ios::beg);
+		int sizeInBytes = (size_t)(end - begin) + 1;
+
+		char* dataFromDisk = new char[sizeInBytes];
+		dataFromDisk[sizeInBytes - 1] = '\0';
+
+		unsigned int readBytes = 0;
+		char buffer[1024];
+
+		int offset = 0;
+		pFile->seekg(offset, std::ios::beg);
+
+		for (size_t i = 0; !pFile->eof(); i += readBytes)
+		{
+			pFile->read(buffer, 1024);
+			readBytes = (size_t)pFile->gcount();
+			memcpy(dataFromDisk + i, buffer, readBytes);
+		}
+
+		pFile->close();
+
+		std::vector<unsigned char> raw_data(dataFromDisk, dataFromDisk + sizeInBytes);
+
+		if (dataFromDisk != nullptr)
+		{
+			delete[] dataFromDisk;
+			dataFromDisk = nullptr;
+		}
+
+		return raw_data;
+	}
+	else
+	{
+		std::cerr << "Could not open File '%s'!" << filename.c_str() << std::endl;
+		return std::vector<unsigned char>();
+	}
 }
