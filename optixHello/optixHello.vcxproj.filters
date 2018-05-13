@@ -20,6 +20,9 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
+    <None Include="..\src\optixHello\test.cu">
+      <Filter>CUDA Files</Filter>
+    </None>
     <None Include="..\src\optixHello\draw_color.cu">
       <Filter>CUDA Files</Filter>
     </None>

@@ -26,7 +26,8 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#define SAMPLES_DIR "C:/ProgramData/NVIDIA Corporation/OptiX SDK 5.0.1/SDK"
+//#define SAMPLES_DIR "C:/ProgramData/NVIDIA Corporation/OptiX SDK 5.0.1/SDK"
+#define SAMPLES_DIR "C:/Users/Greg/Documents/Visual Studio 2015/Projects/Master-Thesis/src"
 #define SAMPLES_PTX_DIR "C:\\Users\\Greg\\Documents\\Visual Studio 2015\\Projects\\Master-Thesis\\lib\\ptx"
 
 // Include directories

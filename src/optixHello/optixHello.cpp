@@ -70,7 +70,9 @@ Understanding how to work with OptiX:
 3. Find out how to implement multiple passes.
 4. Find out how the progressive ray tracing example works.
 5. Find out how the post processing framework works.
-6. Evaluate, whether multiple passes, progressive or post prcessing framework approach is suited, for adaptive ray launching. (an additional pass seems so far most appropriate)
+	-Current WIP. Seems that this is most likely what i will use.
+
+6. Evaluate, whether multiple passes, progressive or post processing framework approach is suited, for adaptive ray launching. (an additional pass seems so far most appropriate)
 extra: Find out whether a "dynanmic" adaptive ray launching is possible, i.e. necessary neighborhood of 
 the current 2D launch index in the ray generation program recieved the output values necessary for adaptive
 ray launching and so the additional rays can be launched. For that i will need at least one more addition output buffer.
@@ -113,6 +115,9 @@ optix::float3 U, V, W;
 
 void printUsageAndExit( const char* argv0 );
 
+// Postprocessing
+CommandList commandListAdditionalRays;
+
 //
 // Predeclares
 //
@@ -120,6 +125,7 @@ void printUsageAndExit( const char* argv0 );
 struct UsageReportLogger;
 
 Buffer getOutputBuffer();
+Buffer getPostProcessOutputBuffer();
 void destroyContext();
 void createContext(int usage_report_level, UsageReportLogger* logger);
 void loadMesh(const std::string& filename);
@@ -136,6 +142,10 @@ Buffer getOutputBuffer()
 	return context["output_buffer"]->getBuffer();
 }
 
+Buffer getPostProcessOutputBuffer()
+{
+	return context["post_process_output_buffer"]->getBuffer();
+}
 
 void destroyContext()
 {
@@ -196,8 +206,12 @@ void createContext(int usage_report_level, UsageReportLogger* logger)
 
 	// Ray generation program
 	const char *ptx = sutil::getPtxString(SAMPLE_NAME, "draw_color.cu");
+	std::cout << std::string(ptx) << std::endl;
 	Program ray_gen_program = context->createProgramFromPTXString(ptx, "pinhole_camera");
 	context->setRayGenerationProgram(0, ray_gen_program);
+
+	//Program ad_ray_gen_program = context->createProgramFromPTXString(ptx, "adaptive_camera");
+	//context->setRayGenerationProgram(0, ad_ray_gen_program);
 
 	// Exception program
 	Program exception_program = context->createProgramFromPTXString(ptx, "exception");
@@ -313,6 +327,36 @@ void setupAdditionalRaysBuffer()
 	delete[] perLaunchIdxRayBudgets;
 }
 
+/*
+I want to find out if i can use the post processing framework without any inbuilt stages, but additional launches only.
+The order as i imagine the post processing for additional, addaptive rays to happen:
+1. Input image. (1. Ray gen program)
+2. Compute additional ray count.
+3. Launch additional rays and and merge the result into the input image of 1. step. (Switch to 2. ray gen program)
+*/
+void setupPostprocessing() 
+{
+	commandListAdditionalRays = context->createCommandList();
+	
+	// Input buffer for post processing
+	setupAdditionalRaysBuffer();
+	context->declareVariable("input_buffer")->set(getOutputBuffer());
+
+	// Output buffer of adaptive post processing 
+	Buffer buffer = sutil::createOutputBuffer(context, RT_FORMAT_UNSIGNED_BYTE4, width, height, use_pbo);
+	context["post_process_output_buffer"]->set(buffer);
+
+	// Adaptive ray generation program
+	const char *ptx = sutil::getPtxString(SAMPLE_NAME, "draw_color.cu");
+	//Program adaptive_ray_gen_program = context->createProgramFromPTXString(ptx, "adaptive_camera");
+	//context->setRayGenerationProgram(0, adaptive_ray_gen_program);										// Not sure if i need to set this as current ray generation program.
+																										// Might need to reset this for the next loop initial render.
+																										// The reason i am doing it currently is that i try to reuse as much of the setup as possible as suggested.
+
+	commandListAdditionalRays->appendLaunch(0, width, height);
+	commandListAdditionalRays->finalize();
+}
+
 int main(int argc, char* argv[])
 {
     try { 
@@ -352,11 +396,15 @@ int main(int argc, char* argv[])
 
 		setupLights();
 
-		setupAdditionalRaysBuffer();
+		//setupAdditionalRaysBuffer();
+
+		setupPostprocessing();
 
         /* Run */
 		context->validate();
 		context->launch(0, width, height);
+
+		commandListAdditionalRays->execute();
 
         /* Display image */
         if( strlen( outfile ) == 0 ) {

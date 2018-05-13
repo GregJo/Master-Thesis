@@ -96,10 +96,17 @@ rtDeclareVariable(float3, W, , );
 rtDeclareVariable(float3, bad_color, , );
 rtBuffer<uchar4, 2>   output_buffer;
 
-/* Aaptive additional rays variables */
-rtDeclareVariable(uint, max_per_launch_idx_ray_budget, , ) = static_cast<uint>(5u);		/* this variable will be written by the user */
-rtBuffer<uchar4, 2>   additional_rays_buffer;				/* this buffer will be initialized by the host, but must also be modified by the graphics device */
+/*
+For post processing create multiple ray genereation programs.
+The first ray generation program provides the input image.
+The other ray generation programs do custom work on the input data initially provided by the first  
 
+Useful comment from NVIDIA guy on their dev talk forum:
+"There always has always been an easy path to custom post-processing within optix -- your own ray-gen programs which do post-processing, as you mention, 
+or your own CUDA kernels. 
+The postprocessing allows you to add optix launches to the pipeline (either for rendering or custom postprocess operations) so that you can use the pipeline 
+as your all-in-one per-frame render pipeline."
+*/
 RT_PROGRAM void pinhole_camera()
 {
 	size_t2 screen = output_buffer.size();
@@ -115,13 +122,23 @@ RT_PROGRAM void pinhole_camera()
 	prd.depth = 0;
 	prd.done = false;
 
-	rtTrace(top_object, ray, prd); /* find out when its done, its important to know whether the code proceeds after this line after "rtTrace" is 'finished', 
-								   or if it starts a parallel subroutine and the code advances without waiting for "rtTrace" to finish (i assume the latter, 
+	rtTrace(top_object, ray, prd); /* find out when its done, its important to know whether the code proceeds after this line after "rtTrace" is 'finished',
+								   or if it starts a parallel subroutine and the code advances without waiting for "rtTrace" to finish (i assume the latter,
 								   due to what i read in the technical overview -> the former is true, evidence by testing) */
 
 	output_buffer[launch_index] = make_color(prd.result);
-	
-	/* Testing for additional adaptive rays */
+}
+
+/* Adaptive additional rays variables */
+rtDeclareVariable(uint, max_per_launch_idx_ray_budget, , ) = static_cast<uint>(5u);		/* this variable will be written by the user */
+rtBuffer<uchar4, 2>   additional_rays_buffer;											/* this buffer will be initialized by the host, but must also be modified by the graphics device */
+
+rtBuffer<uchar4, 2>   input_buffer;														/* this buffer contains the initially rendered picture to be post processed */
+rtBuffer<uchar4, 2>   post_process_output_buffer;										/* this buffer contains the result, processed with additional adaptive rays */
+
+RT_PROGRAM void adaptive_camera()
+{
+	/* Testing for additional adaptive rays. Added jittering for test purposes. */
 	
 	/* 
 		Postpone launching additional rays until first currently traced ray output is avaible (extend to neighborhood after success).
@@ -167,7 +184,7 @@ RT_PROGRAM void pinhole_camera()
 
 			rtTrace(top_object, ray2, prd2);
 
-			output_buffer[launch_index] = make_color(prd2.result);
+			post_process_output_buffer[launch_index] = input_buffer[launch_index] + make_color(prd2.result);
 			additional_rays_count--;
 
 			jitter = static_cast<float>(additional_rays_count) / static_cast<float>(max_per_launch_idx_ray_budget);
