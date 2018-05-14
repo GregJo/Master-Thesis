@@ -40,15 +40,15 @@ Scientific questions for master thesis:
 	- host/API side:
 		- It has to be able to start an arbitary(!) additional ammount of rays depending on output(!), and/or if a condition(!) is met.
 		- I likely will not extend the given OptiX xpp-wrapper itself to implement my adaptive ray launching mechanism.
-		  I intend to write my adaptive implementation into seperate source files, using the OptiX xpp-wrapper as a base.
-		- I probably have to add .png loading capability to the .obj loader used by the OptiX xpp-wrapper
-		- Later on switch to and/or extend on the "optixPathTracer" project
+		  I intend to write my adaptive implementation into seperate source files, using the OptiX xpp-wrapper as a base.						(next ToDo)
+		- I probably have to add .png loading capability to the .obj loader used by the OptiX xpp-wrapper (nearly done)							(nearly done)
+		- Later on switch to and/or extend on the "optixPathTracer" project																		(next ToDo)
 	- device/.cu side: 
-		- Implement it as an additional adaptive pass (must ensure that the first resulting image is completely avaible)
-		- Have a user set maximum sample budget per pixel
-		- Have a function that is providing current additional adaptive sample count, based on the neighborhood of the current launch index.
+		- Implement it as an additional adaptive pass (must ensure that the first resulting image is completely avaible)						(basically done)
+		- Have a user set maximum sample budget per pixel (done in so far as i have a basic working implementation)								(done)
+		- Have a function that is providing current additional adaptive sample count, based on the neighborhood of the current launch index.	(next ToDo)
 		- In case of race conditions use atomics
-		- Launch addtional, adaptive rays with "rtTrace".
+		- Launch addtional, adaptive rays with "rtTrace".																						(done)
 
 2. Extra (device/.cu side): Make the adaptive pass dynamic, which means that the function that is providing current additional adaptive sample count will start, 
 							as soon it has the necessary neighborhood values avaible. Disregarding whether the whole initial image is finished.
@@ -67,15 +67,24 @@ Understanding how to work with OptiX:
 	  The wrapper even has fall backs to default programs, which are part of "sutil_sdk".
 
 2. Find out how to access the (neighboring) output buffer values in the ray generation program for reading.
+   Will likely treat the initial input as a texture assigning a sampler to it.
 3. Find out how to implement multiple passes.
+	- Done. Very similar to the post processing framework.
+
 4. Find out how the progressive ray tracing example works.
 5. Find out how the post processing framework works.
-	-Current WIP. Seems that this is most likely what i will use.
+	- Done. Thats what i use to implement the adaptive pass, namely the command list of the post processing framework. 
+	  In fact i don't really need it, but i will use it anyway.
+	  I use the command list to implement an additional pass. All that the command list does is to ensure that each launch happens
+	  in order as it was inserted after the previous has been completed.
+	  The command list can simply be left out, as i could simply add launches of ray generation programs after the initial one without having to worry,
+	  that the output of a previous is not complete, as it seems guaranteed that the program proceeds only after the output is ready.
 
 6. Evaluate, whether multiple passes, progressive or post processing framework approach is suited, for adaptive ray launching. (an additional pass seems so far most appropriate)
 extra: Find out whether a "dynanmic" adaptive ray launching is possible, i.e. necessary neighborhood of 
 the current 2D launch index in the ray generation program recieved the output values necessary for adaptive
-ray launching and so the additional rays can be launched. For that i will need at least one more addition output buffer.
+ray launching and so the additional rays can be launched. For that i will need at least one more additional output buffer.
+	- 
 */
 
 #include <optix.h>
@@ -191,7 +200,7 @@ void createContext(int usage_report_level, UsageReportLogger* logger)
 	// Set up context
 	context = Context::create();
 	context->setRayTypeCount(2);
-	context->setEntryPointCount(1);
+	context->setEntryPointCount(2);
 	if (usage_report_level > 0)
 	{
 		context->setUsageReportCallback(usageReportCallback, usage_report_level, logger);
@@ -206,12 +215,8 @@ void createContext(int usage_report_level, UsageReportLogger* logger)
 
 	// Ray generation program
 	const char *ptx = sutil::getPtxString(SAMPLE_NAME, "draw_color.cu");
-	std::cout << std::string(ptx) << std::endl;
 	Program ray_gen_program = context->createProgramFromPTXString(ptx, "pinhole_camera");
 	context->setRayGenerationProgram(0, ray_gen_program);
-
-	//Program ad_ray_gen_program = context->createProgramFromPTXString(ptx, "adaptive_camera");
-	//context->setRayGenerationProgram(0, ad_ray_gen_program);
 
 	// Exception program
 	Program exception_program = context->createProgramFromPTXString(ptx, "exception");
@@ -221,6 +226,24 @@ void createContext(int usage_report_level, UsageReportLogger* logger)
 	// Miss program
 	context->setMissProgram(0, context->createProgramFromPTXString(sutil::getPtxString(SAMPLE_NAME, "draw_color.cu"), "miss"));
 	context["bg_color"]->setFloat(0.2f, 0.2f, 0.2f);
+
+	context->declareVariable("input_buffer")->set(getOutputBuffer());
+
+	// Output buffer of adaptive post processing 
+	Buffer post_process_out_buffer = sutil::createOutputBuffer(context, RT_FORMAT_UNSIGNED_BYTE4, width, height, use_pbo);
+	context["post_process_output_buffer"]->set(post_process_out_buffer);
+
+	// Adaptive ray generation program
+	//const char *ptx = sutil::getPtxString(SAMPLE_NAME, "draw_color.cu");
+	Program adaptive_ray_gen_program = context->createProgramFromPTXString(ptx, "adaptive_camera");
+	context->setRayGenerationProgram(1, adaptive_ray_gen_program);										// Not sure if i need to set this as current ray generation program.
+																										// Might need to reset this for the next loop initial render (ToDo).
+																										// The reason i am doing it currently is that i try to reuse as much of the setup as possible as suggested.
+																										// Exception program
+
+	//Program exception_program = context->createProgramFromPTXString(ptx, "exception");
+	context->setExceptionProgram(1, exception_program);
+	context["bad_color"]->setFloat(1.0f, 0.0f, 1.0f);
 }
 
 
@@ -340,20 +363,25 @@ void setupPostprocessing()
 	
 	// Input buffer for post processing
 	setupAdditionalRaysBuffer();
-	context->declareVariable("input_buffer")->set(getOutputBuffer());
+	//context->declareVariable("input_buffer")->set(getOutputBuffer());
 
-	// Output buffer of adaptive post processing 
-	Buffer buffer = sutil::createOutputBuffer(context, RT_FORMAT_UNSIGNED_BYTE4, width, height, use_pbo);
-	context["post_process_output_buffer"]->set(buffer);
+	//// Output buffer of adaptive post processing 
+	//Buffer buffer = sutil::createOutputBuffer(context, RT_FORMAT_UNSIGNED_BYTE4, width, height, use_pbo);
+	//context["post_process_output_buffer"]->set(buffer);
 
-	// Adaptive ray generation program
-	const char *ptx = sutil::getPtxString(SAMPLE_NAME, "draw_color.cu");
+	//// Adaptive ray generation program
+	//const char *ptx = sutil::getPtxString(SAMPLE_NAME, "draw_color.cu");
 	//Program adaptive_ray_gen_program = context->createProgramFromPTXString(ptx, "adaptive_camera");
-	//context->setRayGenerationProgram(0, adaptive_ray_gen_program);										// Not sure if i need to set this as current ray generation program.
-																										// Might need to reset this for the next loop initial render.
-																										// The reason i am doing it currently is that i try to reuse as much of the setup as possible as suggested.
+	//context->setRayGenerationProgram(1, adaptive_ray_gen_program);										// Not sure if i need to set this as current ray generation program.
+	//																									// Might need to reset this for the next loop initial render (ToDo).
+	//																									// The reason i am doing it currently is that i try to reuse as much of the setup as possible as suggested.
+	//																									// Exception program
+	//
+	//Program exception_program = context->createProgramFromPTXString(ptx, "exception");
+	//context->setExceptionProgram(1, exception_program);
+	//context["bad_color"]->setFloat(1.0f, 0.0f, 1.0f);
 
-	commandListAdditionalRays->appendLaunch(0, width, height);
+	commandListAdditionalRays->appendLaunch(1, width, height);
 	commandListAdditionalRays->finalize();
 }
 
@@ -407,19 +435,18 @@ int main(int argc, char* argv[])
 		commandListAdditionalRays->execute();
 
         /* Display image */
-        if( strlen( outfile ) == 0 ) {
-            sutil::displayBufferGlut( argv[0], getOutputBuffer() );
-        } else {
-            sutil::displayBufferPPM( outfile, getOutputBuffer(), false);
-        }
+        //if( strlen( outfile ) == 0 ) {
+        //    sutil::displayBufferGlut( argv[0], getOutputBuffer() );
+        //} else {
+        //    sutil::displayBufferPPM( outfile, getOutputBuffer(), false);
+        //}
 
-        /* Clean up */
-  //      RT_CHECK_ERROR( rtBufferDestroy( buffer ) );
-		//RT_CHECK_ERROR( rtProgramDestroy( pinhole_camera ) );
-		//RT_CHECK_ERROR( rtProgramDestroy( closest_hit_program ) );
-		//RT_CHECK_ERROR( rtProgramDestroy( miss ) );
-		//RT_CHECK_ERROR( rtProgramDestroy( exception) );
-  //      RT_CHECK_ERROR( rtContextDestroy( context ) );
+		if (strlen(outfile) == 0) {
+			sutil::displayBufferGlut(argv[0], getPostProcessOutputBuffer());
+		}
+		else {
+			sutil::displayBufferPPM(outfile, getPostProcessOutputBuffer(), false);
+		}
 
 		destroyContext();
 

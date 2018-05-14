@@ -80,8 +80,14 @@ static __device__ __inline__ uchar4 make_color(const float3& c)
 	static_cast<unsigned char>(__saturatef(c.y)*255.99f),  /* G */
 	static_cast<unsigned char>(__saturatef(c.x)*255.99f),  /* R */
 	255u);                                                 /* A */
-	};
+};
 
+static __device__ __inline__ float3 revert_color(const uchar4& c)
+{
+	return make_float3(static_cast<unsigned char>(__saturatef(c.z)*1.0f/255.99f),  /* B */
+		static_cast<unsigned char>(__saturatef(c.y)*1.0f/255.99f),  /* G */
+		static_cast<unsigned char>(__saturatef(c.x)*1.0f/255.99f)  /* R */);                                                 /* A */
+};
 
 rtDeclareVariable(optix::Ray, ray, rtCurrentRay, );
 
@@ -150,17 +156,30 @@ RT_PROGRAM void adaptive_camera()
 			     according to the current budget and add/write the results into the output buffer.
 		Additional adaptive rays count will be avaible in the "additional_rays_buffer"
 	*/
-	
+	size_t2 screen = post_process_output_buffer.size();
+
+	float2 d = make_float2(launch_index) /
+		make_float2(screen) * 2.f - 1.f;
+
 	uint additional_rays_count = static_cast<uint>(additional_rays_buffer[launch_index].x);
 
+	float3 ray_origin = eye;
+	float3 ray_direction = normalize(d.x*U + d.y*V + W);
+
 	/* Make the following 'adaptive pass' test to a real adaptive pass (for that i must ensure, that the first resulting image is completely avaible). */
-	if (prd.done)
-	{
-		additional_rays_count = static_cast<uint>(output_buffer[launch_index].x) % (max_per_launch_idx_ray_budget + 1u);
+	//if (prd.done)
+	//{
+		additional_rays_count = static_cast<uint>(input_buffer[launch_index].x) % (max_per_launch_idx_ray_budget + 1u);
 		//rtPrintf("Launch index: %u, %u; Additional rays count: %u !\n\n", launch_index.x, launch_index.y, additional_rays_count);
 		float jitter = static_cast<float>(additional_rays_count) / static_cast<float>(max_per_launch_idx_ray_budget);
 		float jitterScale = 0.1f;
 		jitter = jitter * jitterScale;
+
+		if (additional_rays_count <= 0)
+		{
+			post_process_output_buffer[launch_index] = make_color(bad_color);
+		}
+
 		while (additional_rays_count > 0u)
 		{
 			//rtPrintf("Additional rays left: %u !\n", additional_rays_count);
@@ -184,14 +203,15 @@ RT_PROGRAM void adaptive_camera()
 
 			rtTrace(top_object, ray2, prd2);
 
-			post_process_output_buffer[launch_index] = input_buffer[launch_index] + make_color(prd2.result);
+			/*post_process_output_buffer[launch_index] = make_color(revert_color(input_buffer[launch_index]) + prd2.result);*/
+			post_process_output_buffer[launch_index] = make_color(make_float3(1.0f));
 			additional_rays_count--;
 
 			jitter = static_cast<float>(additional_rays_count) / static_cast<float>(max_per_launch_idx_ray_budget);
 			jitterScale = jitterScale * -1.f;
 			jitter = jitter * jitterScale;
 		}
-	}
+	//}
 }
 
 RT_PROGRAM void exception()
