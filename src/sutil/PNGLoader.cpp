@@ -24,6 +24,16 @@ PNGLoader::PNGLoader(const std::string& filename, const LodePNGColorType PNGcolo
 
 	unsigned error = lodepng::decode(out, m_nx, m_ny, state, raw_data);
 	std::cout << "Size of out vector: " << out.size() << std::endl;
+
+	unsigned int m_nx2 = 0, m_ny2 = 0;
+	std::vector<unsigned char> out2;
+	unsigned error2 = lodepng::decode(out2, m_nx2, m_ny2, filename, LodePNGColorType::LCT_RGB);
+	std::cout << "Size of correct out vector: " << out.size() << std::endl << std::endl;
+
+	// Print first 3 color values (9 floats all in all)
+	printf("First 3 colors of out vector:  [%u,%u,%u] | [%u,%u,%u] | [%u,%u,%u]\n", out[0], out[1], out[2], out[3], out[4], out[5], out[6], out[7], out[8]);
+	printf("First 3 colors of out2 vector: [%u,%u,%u] | [%u,%u,%u] | [%u,%u,%u]\n\n", out2[0], out2[1], out2[2], out2[3], out2[4], out2[5], out2[6], out2[7], out2[8]);
+
 	if (!error)
 	{
 		m_channels = -1;
@@ -45,11 +55,19 @@ PNGLoader::PNGLoader(const std::string& filename, const LodePNGColorType PNGcolo
 			m_channels = 4;
 			break;
 		}
-		m_raster = new unsigned char[m_nx * m_ny * m_channels];
-		memcpy(m_raster, out.data(), m_nx * m_ny * m_channels);
+		//m_channels = 4;
+		//m_raster = new unsigned char[m_nx * m_ny * m_channels];
+		//memcpy(m_raster, out.data(), m_nx * m_ny * m_channels);
+
+		m_raster = new unsigned char[out.size()];
+		memcpy(m_raster, out.data(), out.size());
+
+		//m_channels = 3;
+		//m_raster = new unsigned char[m_nx2 * m_ny2 * m_channels];
+		//memcpy(m_raster, out2.data(), m_nx2 * m_ny2 * m_channels);
 
 		std::cout << "Size from width, height and channels: " << m_nx * m_ny * m_channels << std::endl;
-		std::cout << "Channels: " << m_channels << std::endl;
+		std::cout << "Channels: " << m_channels << std::endl << std::endl;
 	}
 	else
 	{
@@ -130,44 +148,48 @@ SUTILAPI optix::TextureSampler PNGLoader::loadTexture(optix::Context context,
 	for (unsigned int i = 0; i < nx; ++i) {
 		for (unsigned int j = 0; j < ny; ++j) {
 
-			unsigned int ppm_index = ((ny - j - 1)*nx + i) * 3;
+			unsigned int png_index = ((ny - j - 1)*nx + i) * 4;//m_channels;
 			unsigned int buf_index = ((j)*nx + i) * 4;
 
 			switch (m_channels) 
 			{
 				case 1:
-					r = raster()[ppm_index + 0];
-					g = raster()[ppm_index + 0];
-					b = raster()[ppm_index + 0];
+					r = raster()[png_index + 0];
+					g = raster()[png_index + 0];
+					b = raster()[png_index + 0];
 					a = 255;
 					break;
 				case 2: 
-					r = raster()[ppm_index + 0];
-					g = raster()[ppm_index + 1];
-					b = raster()[ppm_index + 1];
+					r = raster()[png_index + 0];
+					g = raster()[png_index + 1];
+					b = raster()[png_index + 1];
 					a = 255;
 					break;
 				case 3:
-					r = raster()[ppm_index + 0];
-					g = raster()[ppm_index + 1];
-					b = raster()[ppm_index + 2];
+					r = raster()[png_index + 0];
+					g = raster()[png_index + 1];
+					b = raster()[png_index + 2];
 					a = 255;
 					break;
 				case 4:
-					r = raster()[ppm_index + 0];
-					g = raster()[ppm_index + 1];
-					b = raster()[ppm_index + 2];
-					a = raster()[ppm_index + 3];
+					r = raster()[png_index + 0];
+					g = raster()[png_index + 1];
+					b = raster()[png_index + 2];
+					a = raster()[png_index + 3];
 					break;
 				case -1: break;
 			}
-
+			
 			buffer_data[buf_index + 0] = r;
 			buffer_data[buf_index + 1] = g;
 			buffer_data[buf_index + 2] = b;
 			buffer_data[buf_index + 3] = a;
 		}
 	}
+
+	printf("First color:  [ %u , %u , %u , %u ]\n", raster()[0], raster()[1], raster()[2], unsigned char(255));
+	printf("Second color:  [ %u , %u , %u , %u ]\n", raster()[3], raster()[4], raster()[5], unsigned char(255));
+	printf("Last [ R , G , B , A ]:  [ %u , %u , %u , %u ]\n\n\n", r, g, b, a);
 
 	buffer->unmap();
 

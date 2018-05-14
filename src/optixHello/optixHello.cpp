@@ -435,18 +435,18 @@ int main(int argc, char* argv[])
 		commandListAdditionalRays->execute();
 
         /* Display image */
-        //if( strlen( outfile ) == 0 ) {
-        //    sutil::displayBufferGlut( argv[0], getOutputBuffer() );
-        //} else {
-        //    sutil::displayBufferPPM( outfile, getOutputBuffer(), false);
-        //}
+        if( strlen( outfile ) == 0 ) {
+            sutil::displayBufferGlut( argv[0], getOutputBuffer() );
+        } else {
+            sutil::displayBufferPPM( outfile, getOutputBuffer(), false);
+        }
 
-		if (strlen(outfile) == 0) {
-			sutil::displayBufferGlut(argv[0], getPostProcessOutputBuffer());
-		}
-		else {
-			sutil::displayBufferPPM(outfile, getPostProcessOutputBuffer(), false);
-		}
+		//if (strlen(outfile) == 0) {
+		//	sutil::displayBufferGlut(argv[0], getPostProcessOutputBuffer());
+		//}
+		//else {
+		//	sutil::displayBufferPPM(outfile, getPostProcessOutputBuffer(), false);
+		//}
 
 		destroyContext();
 
