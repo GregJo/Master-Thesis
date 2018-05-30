@@ -66,8 +66,8 @@ PNGLoader::PNGLoader(const std::string& filename, const LodePNGColorType PNGcolo
 		//m_raster = new unsigned char[m_nx2 * m_ny2 * m_channels];
 		//memcpy(m_raster, out2.data(), m_nx2 * m_ny2 * m_channels);
 
-		std::cout << "Size from width, height and channels: " << m_nx * m_ny * m_channels << std::endl;
-		std::cout << "Channels: " << m_channels << std::endl << std::endl;
+		//std::cout << "Size from width, height and channels: " << m_nx * m_ny * m_channels << std::endl;
+		//std::cout << "Channels: " << m_channels << std::endl << std::endl;
 	}
 	else
 	{
@@ -187,9 +187,9 @@ SUTILAPI optix::TextureSampler PNGLoader::loadTexture(optix::Context context,
 		}
 	}
 
-	printf("First color:  [ %u , %u , %u , %u ]\n", raster()[0], raster()[1], raster()[2], unsigned char(255));
-	printf("Second color:  [ %u , %u , %u , %u ]\n", raster()[3], raster()[4], raster()[5], unsigned char(255));
-	printf("Last [ R , G , B , A ]:  [ %u , %u , %u , %u ]\n\n\n", r, g, b, a);
+	//printf("First color:  [ %u , %u , %u , %u ]\n", raster()[0], raster()[1], raster()[2], unsigned char(255));
+	//printf("Second color:  [ %u , %u , %u , %u ]\n", raster()[3], raster()[4], raster()[5], unsigned char(255));
+	//printf("Last [ R , G , B , A ]:  [ %u , %u , %u , %u ]\n\n\n", r, g, b, a);
 
 	buffer->unmap();
 

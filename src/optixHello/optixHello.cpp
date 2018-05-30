@@ -87,64 +87,121 @@ ray launching and so the additional rays can be launched. For that i will need a
 	- 
 */
 
-#include <optix.h>
-#include <stdlib.h>
-#include <stdio.h>
-#include <string.h>
-#include <sutil.h>
+/*
+Concrete tasks before master thesis:
+(Online - primary)
+1. Research on related work on adaptive online rendering with path tracing.
+2. Combine my current progress with realtime, online path tracing provided by the optix example and make it work.
+3. Implement a simple variance based adaptive rendering algorithm on the realtime, online path tracing with adaptive post processing 
+   (algorithm described in "Physically Based Rendering. From Theory to Implementation third edition", page 402). Make it work.
 
-#include "commonStructs.h"
+Important aspects to consider:
+- Correctness
+- Coherency
+- Exploitation of time coherency (not much change from frame t to frame t+1)
+- No artifacts allowed
+
+Also already start writing on related works chapter.
+
+(Offline - secondary)
+Bonus:
+Learn about the mechanism, that allows optix to decide how many rays will be sent at any collision (Based on the "visit" function 
+(determines in the BVH which nodes might be selected for the next visit), which operates on "selector nodes").
+
+After that i should be able to make a proposal of the topic my master thesis will be about.
+*/
+#ifdef __APPLE__
+#  include <GLUT/glut.h>
+#else
+#  include <GL/glew.h>
+#  if defined( _WIN32 )
+#    include <GL/wglew.h>
+#    include <GL/freeglut.h>
+#  else
+#    include <GL/glut.h>
+#  endif
+#endif
 
 #include <optixu/optixpp_namespace.h>
 #include <optixu/optixu_math_stream_namespace.h>
 
-#include <OptiXMesh.h>
+#include "optixPathTracer.h"
+#include <sutil.h>
+#include <Arcball.h>
 
+#include <OptiXMesh.h>
+#include <algorithm>
+#include <cstring>
+#include <iostream>
+#include <stdint.h>
 #include <iomanip>
 
 using namespace optix;
 
 const char* const SAMPLE_NAME = "optixHello";
 
+//------------------------------------------------------------------------------
 //
 // Globals
 //
+//------------------------------------------------------------------------------
 
-Context        context;
-uint32_t       width = 1024u;
-uint32_t       height = 768u;
-bool           use_pbo = false;
-Aabb    aabb;
+Context        context = 0;
+uint32_t       width = 512;
+uint32_t       height = 512;
+bool           use_pbo = true;
 
+int            frame_number = 1;
+int            sqrt_num_samples = 2;
+int            rr_begin_depth = 1;
+Program        pgram_intersection = 0;
+Program        pgram_bounding_box = 0;
+
+// Camera state
 float3         camera_up;
 float3         camera_lookat;
 float3         camera_eye;
+Matrix4x4      camera_rotate;
+bool           camera_changed = true;
+sutil::Arcball arcball;
 
-optix::float3 U, V, W;
-
-void printUsageAndExit( const char* argv0 );
+// Mouse state
+int2           mouse_prev_pos;
+int            mouse_button;
 
 // Postprocessing
-CommandList commandListAdditionalRays;
+bool usePostProcessing = false;
+CommandList commandListAdaptive;
 
+//------------------------------------------------------------------------------
 //
-// Predeclares
+// Forward decls 
 //
-
-struct UsageReportLogger;
+//------------------------------------------------------------------------------
 
 Buffer getOutputBuffer();
 Buffer getPostProcessOutputBuffer();
 void destroyContext();
-void createContext(int usage_report_level, UsageReportLogger* logger);
-void loadMesh(const std::string& filename);
+void registerExitHandler();
+void createContext();
+void loadGeometry();
 void setupCamera();
-void setupLights();
-void setupCamera();
+void updateCamera();
+void glutInitialize(int* argc, char** argv);
+void glutRun();
 
+void glutDisplay();
+void glutKeyboardPress(unsigned char k, int x, int y);
+void glutMousePress(int button, int state, int x, int y);
+void glutMouseMotion(int x, int y);
+void glutResize(int w, int h);
+
+
+//------------------------------------------------------------------------------
 //
-// Helper Functions
+//  Helper functions
 //
+//------------------------------------------------------------------------------
 
 Buffer getOutputBuffer()
 {
@@ -166,6 +223,548 @@ void destroyContext()
 }
 
 
+void registerExitHandler()
+{
+	// register shutdown handler
+#ifdef _WIN32
+	glutCloseFunc(destroyContext);  // this function is freeglut-only
+#else
+	atexit(destroyContext);
+#endif
+}
+
+
+void setMaterial(
+	GeometryInstance& gi,
+	Material material,
+	const std::string& color_name,
+	const float3& color)
+{
+	gi->addMaterial(material);
+	gi[color_name]->setFloat(color);
+}
+
+
+GeometryInstance createParallelogram(
+	const float3& anchor,
+	const float3& offset1,
+	const float3& offset2)
+{
+	Geometry parallelogram = context->createGeometry();
+	parallelogram->setPrimitiveCount(1u);
+	parallelogram->setIntersectionProgram(pgram_intersection);
+	parallelogram->setBoundingBoxProgram(pgram_bounding_box);
+
+	float3 normal = normalize(cross(offset1, offset2));
+	float d = dot(normal, anchor);
+	float4 plane = make_float4(normal, d);
+
+	float3 v1 = offset1 / dot(offset1, offset1);
+	float3 v2 = offset2 / dot(offset2, offset2);
+
+	parallelogram["plane"]->setFloat(plane);
+	parallelogram["anchor"]->setFloat(anchor);
+	parallelogram["v1"]->setFloat(v1);
+	parallelogram["v2"]->setFloat(v2);
+
+	GeometryInstance gi = context->createGeometryInstance();
+	gi->setGeometry(parallelogram);
+	return gi;
+}
+
+
+void createContext()
+{
+	context = Context::create();
+	context->setRayTypeCount(2);
+	//context->setEntryPointCount(1);
+	context->setEntryPointCount(2);
+	context->setStackSize(1800);
+
+	context["scene_epsilon"]->setFloat(1.e-3f);
+	context["pathtrace_ray_type"]->setUint(0u);
+	context["pathtrace_shadow_ray_type"]->setUint(1u);
+	context["rr_begin_depth"]->setUint(rr_begin_depth);
+
+	Buffer buffer = sutil::createOutputBuffer(context, RT_FORMAT_FLOAT4, width, height, use_pbo);
+	context["output_buffer"]->set(buffer);
+
+	// Setup programs
+	const char *ptx = sutil::getPtxString(SAMPLE_NAME, "optixPathTracer.cu");
+	context->setRayGenerationProgram(0, context->createProgramFromPTXString(ptx, "pathtrace_camera"));
+	context->setExceptionProgram(0, context->createProgramFromPTXString(ptx, "exception"));
+	context->setMissProgram(0, context->createProgramFromPTXString(ptx, "miss"));
+
+	context->declareVariable("input_buffer")->set(getOutputBuffer());
+
+	// Output buffer of adaptive post processing 
+	Buffer post_process_out_buffer = sutil::createOutputBuffer(context, RT_FORMAT_FLOAT4, width, height, use_pbo);
+	context["post_process_output_buffer"]->set(post_process_out_buffer);
+
+	Program adaptive_ray_gen_program = context->createProgramFromPTXString(ptx, "pathtrace_camera_adaptive");
+	context->setRayGenerationProgram(1, adaptive_ray_gen_program);		
+
+	context["sqrt_num_samples"]->setUint(sqrt_num_samples);
+	context["bad_color"]->setFloat(1000000.0f, 0.0f, 1000000.0f); // Super magenta to make sure it doesn't get averaged out in the progressive rendering.
+	context["bg_color"]->setFloat(make_float3(0.0f));
+}
+
+
+void loadGeometry()
+{
+	// Light buffer
+	ParallelogramLight light;
+	light.corner = make_float3(343.0f, 548.6f, 227.0f);
+	light.v1 = make_float3(-130.0f, 0.0f, 0.0f);
+	light.v2 = make_float3(0.0f, 0.0f, 105.0f);
+	light.normal = normalize(cross(light.v1, light.v2));
+	light.emission = make_float3(15.0f, 15.0f, 5.0f);
+
+	Buffer light_buffer = context->createBuffer(RT_BUFFER_INPUT);
+	light_buffer->setFormat(RT_FORMAT_USER);
+	light_buffer->setElementSize(sizeof(ParallelogramLight));
+	int b = sizeof(ParallelogramLight);
+	light_buffer->setSize(1u);
+	int a = sizeof(light);
+	memcpy(light_buffer->map(), &light, sizeof(light));
+	light_buffer->unmap();
+	context["lights"]->setBuffer(light_buffer);
+
+
+	// Set up material
+	Material diffuse = context->createMaterial();
+	const char *ptx = sutil::getPtxString(SAMPLE_NAME, "optixPathTracer.cu");
+	Program diffuse_ch = context->createProgramFromPTXString(ptx, "diffuse");
+	//Program diffuse_ch = context->createProgramFromPTXString(ptx, "diffuse_textured");
+	Program diffuse_ah = context->createProgramFromPTXString(ptx, "shadow");
+	diffuse->setClosestHitProgram(0, diffuse_ch);
+	diffuse->setAnyHitProgram(1, diffuse_ah);
+
+	Material diffuse_light = context->createMaterial();
+	Program diffuse_em = context->createProgramFromPTXString(ptx, "diffuseEmitter");
+	diffuse_light->setClosestHitProgram(0, diffuse_em);
+
+	// Set up parallelogram programs
+	ptx = sutil::getPtxString(SAMPLE_NAME, "parallelogram.cu");
+	pgram_bounding_box = context->createProgramFromPTXString(ptx, "bounds");
+	pgram_intersection = context->createProgramFromPTXString(ptx, "intersect");
+
+	// create geometry instances
+	std::vector<GeometryInstance> gis;
+
+	const float3 white = make_float3(0.8f, 0.8f, 0.8f);
+	const float3 green = make_float3(0.05f, 0.8f, 0.05f);
+	const float3 red = make_float3(0.8f, 0.05f, 0.05f);
+	const float3 light_em = make_float3(15.0f, 15.0f, 5.0f);
+
+	// Floor
+	gis.push_back(createParallelogram(make_float3(0.0f, 0.0f, 0.0f),
+		make_float3(0.0f, 0.0f, 559.2f),
+		make_float3(556.0f, 0.0f, 0.0f)));
+	setMaterial(gis.back(), diffuse, "diffuse_color", white);
+
+	// Ceiling
+	gis.push_back(createParallelogram(make_float3(0.0f, 548.8f, 0.0f),
+		make_float3(556.0f, 0.0f, 0.0f),
+		make_float3(0.0f, 0.0f, 559.2f)));
+	setMaterial(gis.back(), diffuse, "diffuse_color", white);
+
+	// Back wall
+	gis.push_back(createParallelogram(make_float3(0.0f, 0.0f, 559.2f),
+		make_float3(0.0f, 548.8f, 0.0f),
+		make_float3(556.0f, 0.0f, 0.0f)));
+	setMaterial(gis.back(), diffuse, "diffuse_color", white);
+
+	// Right wall
+	gis.push_back(createParallelogram(make_float3(0.0f, 0.0f, 0.0f),
+		make_float3(0.0f, 548.8f, 0.0f),
+		make_float3(0.0f, 0.0f, 559.2f)));
+	setMaterial(gis.back(), diffuse, "diffuse_color", green);
+
+	// Left wall
+	gis.push_back(createParallelogram(make_float3(556.0f, 0.0f, 0.0f),
+		make_float3(0.0f, 0.0f, 559.2f),
+		make_float3(0.0f, 548.8f, 0.0f)));
+	setMaterial(gis.back(), diffuse, "diffuse_color", red);
+
+	// Short block
+	gis.push_back(createParallelogram(make_float3(130.0f, 165.0f, 65.0f),
+		make_float3(-48.0f, 0.0f, 160.0f),
+		make_float3(160.0f, 0.0f, 49.0f)));
+	setMaterial(gis.back(), diffuse, "diffuse_color", white);
+	gis.push_back(createParallelogram(make_float3(290.0f, 0.0f, 114.0f),
+		make_float3(0.0f, 165.0f, 0.0f),
+		make_float3(-50.0f, 0.0f, 158.0f)));
+	setMaterial(gis.back(), diffuse, "diffuse_color", white);
+	gis.push_back(createParallelogram(make_float3(130.0f, 0.0f, 65.0f),
+		make_float3(0.0f, 165.0f, 0.0f),
+		make_float3(160.0f, 0.0f, 49.0f)));
+	setMaterial(gis.back(), diffuse, "diffuse_color", white);
+	gis.push_back(createParallelogram(make_float3(82.0f, 0.0f, 225.0f),
+		make_float3(0.0f, 165.0f, 0.0f),
+		make_float3(48.0f, 0.0f, -160.0f)));
+	setMaterial(gis.back(), diffuse, "diffuse_color", white);
+	gis.push_back(createParallelogram(make_float3(240.0f, 0.0f, 272.0f),
+		make_float3(0.0f, 165.0f, 0.0f),
+		make_float3(-158.0f, 0.0f, -47.0f)));
+	setMaterial(gis.back(), diffuse, "diffuse_color", white);
+
+	// Tall block
+	gis.push_back(createParallelogram(make_float3(423.0f, 330.0f, 247.0f),
+		make_float3(-158.0f, 0.0f, 49.0f),
+		make_float3(49.0f, 0.0f, 159.0f)));
+	setMaterial(gis.back(), diffuse, "diffuse_color", white);
+	gis.push_back(createParallelogram(make_float3(423.0f, 0.0f, 247.0f),
+		make_float3(0.0f, 330.0f, 0.0f),
+		make_float3(49.0f, 0.0f, 159.0f)));
+	setMaterial(gis.back(), diffuse, "diffuse_color", white);
+	gis.push_back(createParallelogram(make_float3(472.0f, 0.0f, 406.0f),
+		make_float3(0.0f, 330.0f, 0.0f),
+		make_float3(-158.0f, 0.0f, 50.0f)));
+	setMaterial(gis.back(), diffuse, "diffuse_color", white);
+	gis.push_back(createParallelogram(make_float3(314.0f, 0.0f, 456.0f),
+		make_float3(0.0f, 330.0f, 0.0f),
+		make_float3(-49.0f, 0.0f, -160.0f)));
+	setMaterial(gis.back(), diffuse, "diffuse_color", white);
+	gis.push_back(createParallelogram(make_float3(265.0f, 0.0f, 296.0f),
+		make_float3(0.0f, 330.0f, 0.0f),
+		make_float3(158.0f, 0.0f, -49.0f)));
+	setMaterial(gis.back(), diffuse, "diffuse_color", white);
+
+	// Create shadow group (no light)
+	GeometryGroup shadow_group = context->createGeometryGroup(gis.begin(), gis.end());
+	shadow_group->setAcceleration(context->createAcceleration("Trbvh"));
+	context["top_shadower"]->set(shadow_group);
+
+	// Light
+	gis.push_back(createParallelogram(make_float3(343.0f, 548.6f, 227.0f),
+		make_float3(-130.0f, 0.0f, 0.0f),
+		make_float3(0.0f, 0.0f, 105.0f)));
+	setMaterial(gis.back(), diffuse_light, "emission_color", light_em);
+
+	// Create geometry group
+	GeometryGroup geometry_group = context->createGeometryGroup(gis.begin(), gis.end());
+	geometry_group->setAcceleration(context->createAcceleration("Trbvh"));
+	context["top_object"]->set(geometry_group);
+}
+
+void loadComplexGeometry()
+{
+	// set up material
+	Material diffuse = context->createMaterial();
+	const char *ptx = sutil::getPtxString(SAMPLE_NAME, "optixPathTracer.cu");
+	Program diffuse_ch = context->createProgramFromPTXString(ptx, "diffuseTextured");
+	Program diffuse_ah = context->createProgramFromPTXString(ptx, "shadow");
+	diffuse->setClosestHitProgram(0, diffuse_ch);
+	diffuse->setAnyHitProgram(1, diffuse_ah);
+
+	Material diffuse_light = context->createMaterial();
+	Program diffuse_em = context->createProgramFromPTXString(ptx, "diffuseEmitter");
+	diffuse_light->setClosestHitProgram(0, diffuse_em);
+
+	// create geometry instances
+
+	// load model
+	Aabb model_aabb;
+	OptiXMesh mesh;
+
+	mesh.closest_hit = diffuse_ch;
+	mesh.any_hit = diffuse_ah;
+
+	mesh.context = context;
+	const std::string filename = "../bin/Data/sponza/sponza.obj";
+	loadMesh(filename, mesh);
+
+	model_aabb.set(mesh.bbox_min, mesh.bbox_max);
+
+	GeometryGroup geometry_group = context->createGeometryGroup();
+	geometry_group->addChild(mesh.geom_instance);
+	geometry_group->setAcceleration(context->createAcceleration("Trbvh"));
+	context["top_object"]->set(geometry_group);
+	context["top_shadower"]->set(geometry_group);
+
+	const float3 white = make_float3(0.8f, 0.8f, 0.8f);
+
+	// Setup diffuse textures (Kd_Map)
+
+	// Light
+	const float3 light_em = make_float3(15.0f, 15.0f, 5.0f);
+
+	// Light buffer
+	ParallelogramLight light;
+	light.corner = make_float3(model_aabb.center().x + 0.0f, model_aabb.center().y + 100.0f, model_aabb.center().z + 50.0f);
+	light.v1 = make_float3(200.0f, 0.0f, 0.0f);
+	light.v2 = make_float3(0.0f, 0.0f, -200.0f);
+	light.normal = normalize(cross(light.v1, light.v2));
+	light.emission = make_float3(15.0f, 15.0f, 5.0f);
+
+	Buffer light_buffer = context->createBuffer(RT_BUFFER_INPUT);
+	light_buffer->setFormat(RT_FORMAT_USER);
+	light_buffer->setElementSize(sizeof(ParallelogramLight));
+	int b = sizeof(ParallelogramLight);
+	light_buffer->setSize(1u);
+	int a = sizeof(light);
+	memcpy(light_buffer->map(), &light, sizeof(light));
+	light_buffer->unmap();
+	context["lights"]->setBuffer(light_buffer);
+
+	GeometryInstance light_parallelogram = createParallelogram(make_float3(model_aabb.center().x + 0.0f, model_aabb.center().y + 100.0f, model_aabb.center().z + 50.0f),
+		make_float3(200.0f, 0.0f, 0.0f),
+		make_float3(0.0f, 0.0f, -200.0f));
+	setMaterial(light_parallelogram, diffuse_light, "emission_color", light_em);
+
+	// Create geometry group
+}
+
+//
+// Post Processing begin
+//
+
+void setupAdditionalRaysBuffer()
+{
+	unsigned char maxPerLaunchIdxRayBudget = static_cast<unsigned char>(2u);
+	unsigned char* perLaunchIdxRayBudgets = new unsigned char[width * height * 4];
+
+	// initialize additional rays buffer
+	for (unsigned int i = 0; i < width * height; i++)
+	{
+		perLaunchIdxRayBudgets[i * 4] = static_cast<unsigned char>(static_cast<unsigned int>(maxPerLaunchIdxRayBudget) + 1u);
+		perLaunchIdxRayBudgets[i * 4 + 1] = static_cast<unsigned char>(static_cast<unsigned int>(maxPerLaunchIdxRayBudget) + 1u);
+		perLaunchIdxRayBudgets[i * 4 + 2] = static_cast<unsigned char>(static_cast<unsigned int>(maxPerLaunchIdxRayBudget) + 1u);
+		perLaunchIdxRayBudgets[i * 4 + 3] = static_cast<unsigned char>(static_cast<unsigned int>(maxPerLaunchIdxRayBudget) + 1u);
+	}
+
+	// Additional rays test buffer setup
+	Buffer additional_rays_buffer = sutil::createInputOutputBuffer(context, RT_FORMAT_UNSIGNED_BYTE4, width, height, false);	
+	memcpy(additional_rays_buffer->map(), perLaunchIdxRayBudgets, sizeof(unsigned char) * width * height * 4);
+	additional_rays_buffer->unmap();
+	context["additional_rays_buffer"]->set(additional_rays_buffer);
+
+	delete[] perLaunchIdxRayBudgets;
+}
+
+void setupPostprocessing()
+{
+	commandListAdaptive = context->createCommandList();
+
+	// Input buffer for post processing
+	setupAdditionalRaysBuffer();
+
+	commandListAdaptive->appendLaunch(1, width, height);
+	commandListAdaptive->finalize();
+	usePostProcessing = true;
+}
+
+//
+// Post Processing end
+//
+
+void setupCamera()
+{
+	camera_eye = make_float3(-500.0f, 1250.0f, 0.0f);
+	camera_lookat = make_float3(0.0f, 0.0f, 0.0f);
+	camera_up = make_float3(0.0f, 1.0f, 0.0f);
+
+	camera_rotate = Matrix4x4::identity();
+}
+
+
+void updateCamera()
+{
+	const float fov = 35.0f;
+	const float aspect_ratio = static_cast<float>(width) / static_cast<float>(height);
+
+	float3 camera_u, camera_v, camera_w;
+	sutil::calculateCameraVariables(
+		camera_eye, camera_lookat, camera_up, fov, aspect_ratio,
+		camera_u, camera_v, camera_w, /*fov_is_vertical*/ true);
+
+	const Matrix4x4 frame = Matrix4x4::fromBasis(
+		normalize(camera_u),
+		normalize(camera_v),
+		normalize(-camera_w),
+		camera_lookat);
+	const Matrix4x4 frame_inv = frame.inverse();
+	// Apply camera rotation twice to match old SDK behavior
+	const Matrix4x4 trans = frame*camera_rotate*camera_rotate*frame_inv;
+
+	camera_eye = make_float3(trans*make_float4(camera_eye, 1.0f));
+	camera_lookat = make_float3(trans*make_float4(camera_lookat, 1.0f));
+	camera_up = make_float3(trans*make_float4(camera_up, 0.0f));
+
+	sutil::calculateCameraVariables(
+		camera_eye, camera_lookat, camera_up, fov, aspect_ratio,
+		camera_u, camera_v, camera_w, true);
+
+	camera_rotate = Matrix4x4::identity();
+
+	if (camera_changed) // reset accumulation
+		frame_number = 1;
+	camera_changed = false;
+
+	context["frame_number"]->setUint(frame_number++);
+	context["eye"]->setFloat(camera_eye);
+	context["U"]->setFloat(camera_u);
+	context["V"]->setFloat(camera_v);
+	context["W"]->setFloat(camera_w);
+
+}
+
+
+void glutInitialize(int* argc, char** argv)
+{
+	glutInit(argc, argv);
+	glutInitDisplayMode(GLUT_RGB | GLUT_ALPHA | GLUT_DEPTH | GLUT_DOUBLE);
+	glutInitWindowSize(width, height);
+	glutInitWindowPosition(100, 100);
+	glutCreateWindow(SAMPLE_NAME);
+	glutHideWindow();
+}
+
+
+void glutRun()
+{
+	// Initialize GL state                                                            
+	glMatrixMode(GL_PROJECTION);
+	glLoadIdentity();
+	glOrtho(0, 1, 0, 1, -1, 1);
+
+	glMatrixMode(GL_MODELVIEW);
+	glLoadIdentity();
+
+	glViewport(0, 0, width, height);
+
+	glutShowWindow();
+	glutReshapeWindow(width, height);
+
+	// register glut callbacks
+	glutDisplayFunc(glutDisplay);
+	glutIdleFunc(glutDisplay);
+	glutReshapeFunc(glutResize);
+	glutKeyboardFunc(glutKeyboardPress);
+	glutMouseFunc(glutMousePress);
+	glutMotionFunc(glutMouseMotion);
+
+	registerExitHandler();
+
+	glutMainLoop();
+}
+
+
+//------------------------------------------------------------------------------
+//
+//  GLUT callbacks
+//
+//------------------------------------------------------------------------------
+
+void glutDisplay()
+{
+	updateCamera();
+	context->launch(0, width, height);
+
+	if (usePostProcessing)
+	{
+		commandListAdaptive->execute();
+		sutil::displayBufferGL(getPostProcessOutputBuffer());
+	}
+	else
+	{
+		sutil::displayBufferGL(getOutputBuffer());
+	}
+
+	{
+		static unsigned frame_count = 0;
+		sutil::displayFps(frame_count++);
+	}
+
+	glutSwapBuffers();
+}
+
+void glutKeyboardPress(unsigned char k, int x, int y)
+{
+
+	switch (k)
+	{
+	case('q'):
+	case(27): // ESC
+	{
+		destroyContext();
+		exit(0);
+	}
+	case('s'):
+	{
+		const std::string outputImage = std::string(SAMPLE_NAME) + ".ppm";
+		std::cerr << "Saving current frame to '" << outputImage << "'\n";
+		sutil::displayBufferPPM(outputImage.c_str(), getOutputBuffer(), false);
+		break;
+	}
+	}
+}
+
+
+void glutMousePress(int button, int state, int x, int y)
+{
+	if (state == GLUT_DOWN)
+	{
+		mouse_button = button;
+		mouse_prev_pos = make_int2(x, y);
+	}
+	else
+	{
+		// nothing
+	}
+}
+
+
+void glutMouseMotion(int x, int y)
+{
+	if (mouse_button == GLUT_RIGHT_BUTTON)
+	{
+		const float dx = static_cast<float>(x - mouse_prev_pos.x) /
+			static_cast<float>(width);
+		const float dy = static_cast<float>(y - mouse_prev_pos.y) /
+			static_cast<float>(height);
+		const float dmax = fabsf(dx) > fabs(dy) ? dx : dy;
+		const float scale = std::min<float>(dmax, 0.9f);
+		camera_eye = camera_eye + (camera_lookat - camera_eye)*scale;
+		camera_changed = true;
+	}
+	else if (mouse_button == GLUT_LEFT_BUTTON)
+	{
+		const float2 from = { static_cast<float>(mouse_prev_pos.x),
+			static_cast<float>(mouse_prev_pos.y) };
+		const float2 to = { static_cast<float>(x),
+			static_cast<float>(y) };
+
+		const float2 a = { from.x / width, from.y / height };
+		const float2 b = { to.x / width, to.y / height };
+
+		camera_rotate = arcball.rotate(b, a);
+		camera_changed = true;
+	}
+
+	mouse_prev_pos = make_int2(x, y);
+}
+
+
+void glutResize(int w, int h)
+{
+	if (w == (int)width && h == (int)height) return;
+
+	camera_changed = true;
+
+	width = w;
+	height = h;
+
+	sutil::resizeBuffer(getOutputBuffer(), width, height);
+
+	glViewport(0, 0, width, height);
+
+	glutPostRedisplay();
+}
+
+void printUsageAndExit( const char* argv0 );
+
 struct UsageReportLogger
 {
 	void log(int lvl, const char* tag, const char* msg)
@@ -184,273 +783,83 @@ void usageReportCallback(int lvl, const char* tag, const char* msg, void* cbdata
 	logger->log(lvl, tag, msg);
 }
 
-void registerExitHandler()
-{
-	// register shutdown handler
-#ifdef _WIN32
-	//glutCloseFunc(destroyContext);  // this function is freeglut-only
-#else
-	atexit(destroyContext);
-#endif
-}
-
-
-void createContext(int usage_report_level, UsageReportLogger* logger)
-{
-	// Set up context
-	context = Context::create();
-	context->setRayTypeCount(2);
-	context->setEntryPointCount(2);
-	if (usage_report_level > 0)
-	{
-		context->setUsageReportCallback(usageReportCallback, usage_report_level, logger);
-	}
-
-	context["radiance_ray_type"]->setUint(0u);
-	context["shadow_ray_type"]->setUint(1u);
-	context["scene_epsilon"]->setFloat(1.e-6f);
-
-	Buffer buffer = sutil::createOutputBuffer(context, RT_FORMAT_UNSIGNED_BYTE4, width, height, use_pbo);
-	context["output_buffer"]->set(buffer);
-
-	// Ray generation program
-	const char *ptx = sutil::getPtxString(SAMPLE_NAME, "draw_color.cu");
-	Program ray_gen_program = context->createProgramFromPTXString(ptx, "pinhole_camera");
-	context->setRayGenerationProgram(0, ray_gen_program);
-
-	// Exception program
-	Program exception_program = context->createProgramFromPTXString(ptx, "exception");
-	context->setExceptionProgram(0, exception_program);
-	context["bad_color"]->setFloat(1.0f, 0.0f, 1.0f);
-
-	// Miss program
-	context->setMissProgram(0, context->createProgramFromPTXString(sutil::getPtxString(SAMPLE_NAME, "draw_color.cu"), "miss"));
-	context["bg_color"]->setFloat(0.2f, 0.2f, 0.2f);
-
-	context->declareVariable("input_buffer")->set(getOutputBuffer());
-
-	// Output buffer of adaptive post processing 
-	Buffer post_process_out_buffer = sutil::createOutputBuffer(context, RT_FORMAT_UNSIGNED_BYTE4, width, height, use_pbo);
-	context["post_process_output_buffer"]->set(post_process_out_buffer);
-
-	// Adaptive ray generation program
-	//const char *ptx = sutil::getPtxString(SAMPLE_NAME, "draw_color.cu");
-	Program adaptive_ray_gen_program = context->createProgramFromPTXString(ptx, "adaptive_camera");
-	context->setRayGenerationProgram(1, adaptive_ray_gen_program);										// Not sure if i need to set this as current ray generation program.
-																										// Might need to reset this for the next loop initial render (ToDo).
-																										// The reason i am doing it currently is that i try to reuse as much of the setup as possible as suggested.
-																										// Exception program
-
-	//Program exception_program = context->createProgramFromPTXString(ptx, "exception");
-	context->setExceptionProgram(1, exception_program);
-	context["bad_color"]->setFloat(1.0f, 0.0f, 1.0f);
-}
-
-
-void loadMesh(const std::string& filename)
-{
-	OptiXMesh mesh;
-	mesh.context = context;
-	//mesh.closest_hit = context->createProgramFromPTXString(sutil::getPtxString(SAMPLE_NAME, "draw_color.cu"), "closest_hit_radiance0");
-	loadMesh(filename, mesh);
-
-	aabb.set(mesh.bbox_min, mesh.bbox_max);
-
-	GeometryGroup geometry_group = context->createGeometryGroup();
-	geometry_group->addChild(mesh.geom_instance);
-	geometry_group->setAcceleration(context->createAcceleration("Trbvh"));
-	context["top_object"]->set(geometry_group);
-	context["top_shadower"]->set(geometry_group);
-}
-
-void setupCamera()
-{
-	const float max_dim = fmaxf(aabb.extent(0), aabb.extent(1)); // max of x, y components
-
-	camera_eye = aabb.center() + make_float3(0.0f, 0.0f, max_dim*1.5f);
-	camera_lookat = aabb.center();
-	camera_up = make_float3(0.0f, 1.0f, 0.0f);
-
-	const float vfov = 90.0f;
-	const float aspect_ratio = static_cast<float>(width) /
-		static_cast<float>(height);
-
-	bool setCustomCameraValues = true;
-	if (setCustomCameraValues)
-	{
-		camera_eye.x = 500.0f;
-		camera_eye.y = 1000.0f;
-		camera_eye.z = 0.0f;
-
-		camera_lookat.x = 0.01f;
-		camera_lookat.y = 0.01f;
-		camera_lookat.z = 0.01f;
-
-		camera_up.x = 0.0f;
-		camera_up.y = 1.0f;
-		camera_up.z = 0.0f;
-	}
-
-	sutil::calculateCameraVariables(
-		camera_eye, camera_lookat, camera_up, vfov, aspect_ratio,
-		U, V, W, true);
-
-	context["eye"]->setFloat(camera_eye);
-	context["U"]->setFloat(U);
-	context["V"]->setFloat(V);
-	context["W"]->setFloat(W);
-}
-
-void setupLights()
-{
-	const float max_dim = fmaxf(aabb.extent(0), aabb.extent(1)); // max of x, y components
-
-	BasicLight lights[] = {
-		{ make_float3(-0.5f,  0.25f, -1.0f), make_float3(0.2f, 0.2f, 0.25f), 0, 0 },
-		{ make_float3(-0.5f,  0.0f ,  1.0f), make_float3(0.1f, 0.1f, 0.10f), 0, 0 },
-		{ make_float3(0.5f,  0.5f ,  0.5f), make_float3(0.7f, 0.7f, 0.65f), 1, 0 }
-	};
-	lights[0].pos *= max_dim * 10.0f;
-	lights[1].pos *= max_dim * 10.0f;
-	lights[2].pos *= max_dim * 10.0f;
-
-	Buffer light_buffer = context->createBuffer(RT_BUFFER_INPUT);
-	light_buffer->setFormat(RT_FORMAT_USER);
-	light_buffer->setElementSize(sizeof(BasicLight));
-	light_buffer->setSize(sizeof(lights) / sizeof(lights[0]));
-	memcpy(light_buffer->map(), lights, sizeof(lights));
-	light_buffer->unmap();
-
-	context["lights"]->set(light_buffer);
-}
-
-
-void setupAdditionalRaysBuffer() 
-{
-	unsigned char maxPerLaunchIdxRayBudget = static_cast<unsigned char>(5u);
-	unsigned char* perLaunchIdxRayBudgets = new unsigned char[width * height * 4];
-
-	// initialize additional rays buffer
-	for (unsigned int i = 0; i < width * height; i++)
-	{
-		perLaunchIdxRayBudgets[i * 4] = static_cast<unsigned char>(static_cast<unsigned int>(maxPerLaunchIdxRayBudget) + 1u);
-		perLaunchIdxRayBudgets[i * 4 + 1] = static_cast<unsigned char>(static_cast<unsigned int>(maxPerLaunchIdxRayBudget) + 1u);
-		perLaunchIdxRayBudgets[i * 4 + 2] = static_cast<unsigned char>(static_cast<unsigned int>(maxPerLaunchIdxRayBudget) + 1u);
-		perLaunchIdxRayBudgets[i * 4 + 3] = static_cast<unsigned char>(static_cast<unsigned int>(maxPerLaunchIdxRayBudget) + 1u);
-	}
-
-	// Additional rays test buffer setup
-	Buffer additional_rays_buffer = sutil::createInputOutputBuffer(context, RT_FORMAT_UNSIGNED_BYTE4, width, height, use_pbo);	// normally RT_FORMAT_UNSIGNED_BYTE would be enough, or RT_FORMAT_UNSIGNED_INT, 
-																																// depending on the magnitude of additional samples one plans to send, 
-																																// but i might want to visualize it
-	memcpy(additional_rays_buffer->map(), perLaunchIdxRayBudgets, sizeof(unsigned char) * width * height * 4);
-	additional_rays_buffer->unmap();
-	context["additional_rays_buffer"]->set(additional_rays_buffer);
-
-	delete[] perLaunchIdxRayBudgets;
-}
-
-/*
-I want to find out if i can use the post processing framework without any inbuilt stages, but additional launches only.
-The order as i imagine the post processing for additional, addaptive rays to happen:
-1. Input image. (1. Ray gen program)
-2. Compute additional ray count.
-3. Launch additional rays and and merge the result into the input image of 1. step. (Switch to 2. ray gen program)
-*/
-void setupPostprocessing() 
-{
-	commandListAdditionalRays = context->createCommandList();
-	
-	// Input buffer for post processing
-	setupAdditionalRaysBuffer();
-	//context->declareVariable("input_buffer")->set(getOutputBuffer());
-
-	//// Output buffer of adaptive post processing 
-	//Buffer buffer = sutil::createOutputBuffer(context, RT_FORMAT_UNSIGNED_BYTE4, width, height, use_pbo);
-	//context["post_process_output_buffer"]->set(buffer);
-
-	//// Adaptive ray generation program
-	//const char *ptx = sutil::getPtxString(SAMPLE_NAME, "draw_color.cu");
-	//Program adaptive_ray_gen_program = context->createProgramFromPTXString(ptx, "adaptive_camera");
-	//context->setRayGenerationProgram(1, adaptive_ray_gen_program);										// Not sure if i need to set this as current ray generation program.
-	//																									// Might need to reset this for the next loop initial render (ToDo).
-	//																									// The reason i am doing it currently is that i try to reuse as much of the setup as possible as suggested.
-	//																									// Exception program
-	//
-	//Program exception_program = context->createProgramFromPTXString(ptx, "exception");
-	//context->setExceptionProgram(1, exception_program);
-	//context["bad_color"]->setFloat(1.0f, 0.0f, 1.0f);
-
-	commandListAdditionalRays->appendLaunch(1, width, height);
-	commandListAdditionalRays->finalize();
-}
-
 int main(int argc, char* argv[])
 {
+	std::string out_file;
+	std::string mesh_file = std::string(sutil::samplesDir()) + "/data/cow.obj";
+	for (int i = 1; i<argc; ++i)
+	{
+		const std::string arg(argv[i]);
+
+		if (arg == "-h" || arg == "--help")
+		{
+			printUsageAndExit(argv[0]);
+		}
+		else if (arg == "-f" || arg == "--file")
+		{
+			if (i == argc - 1)
+			{
+				std::cerr << "Option '" << arg << "' requires additional argument.\n";
+				printUsageAndExit(argv[0]);
+			}
+			out_file = argv[++i];
+		}
+		else if (arg == "-n" || arg == "--nopbo")
+		{
+			use_pbo = false;
+		}
+		else if (arg == "-m" || arg == "--mesh")
+		{
+			if (i == argc - 1)
+			{
+				std::cerr << "Option '" << argv[i] << "' requires additional argument.\n";
+				printUsageAndExit(argv[0]);
+			}
+			mesh_file = argv[++i];
+		}
+		else
+		{
+			std::cerr << "Unknown option '" << arg << "'\n";
+			printUsageAndExit(argv[0]);
+		}
+	}
+
     try { 
-        char outfile[1024];
+		glutInitialize(&argc, argv);
 
-        int width2  = width;
-        int height2 = height;
-        int i;
+#ifndef __APPLE__
+		glewInit();
+#endif
 
-        outfile[0] = '\0';
-
-        sutil::initGlut( &argc, argv );
-
-        for( i = 1; i < argc; ++i ) {
-            if( strcmp( argv[i], "--help" ) == 0 || strcmp( argv[i], "-h" ) == 0 ) {
-                printUsageAndExit( argv[0] );
-            } else if( strcmp( argv[i], "--file" ) == 0 || strcmp( argv[i], "-f" ) == 0 ) {
-                if( i < argc-1 ) {
-                    strcpy( outfile, argv[++i] );
-                } else {
-                    printUsageAndExit( argv[0] );
-                }
-            } else if ( strncmp( argv[i], "--dim=", 6 ) == 0 ) {
-                const char *dims_arg = &argv[i][6];
-                sutil::parseDimensions( dims_arg, width2, height2 );
-            } else {
-                fprintf( stderr, "Unknown option '%s'\n", argv[i] );
-                printUsageAndExit( argv[0] );
-            }
-        }
-
-		UsageReportLogger logger;
-		createContext(0, &logger);
-
-		loadMesh("../bin/Data/sponza/sponza.obj");
+		createContext();
 		setupCamera();
+		loadComplexGeometry();
 
-		setupLights();
-
-		//setupAdditionalRaysBuffer();
-
+		// Adaptive test setup
 		setupPostprocessing();
 
-        /* Run */
 		context->validate();
-		context->launch(0, width, height);
 
-		commandListAdditionalRays->execute();
-
-        /* Display image */
-        if( strlen( outfile ) == 0 ) {
-            sutil::displayBufferGlut( argv[0], getOutputBuffer() );
-        } else {
-            sutil::displayBufferPPM( outfile, getOutputBuffer(), false);
-        }
-
-		//if (strlen(outfile) == 0) {
-		//	sutil::displayBufferGlut(argv[0], getPostProcessOutputBuffer());
-		//}
-		//else {
-		//	sutil::displayBufferPPM(outfile, getPostProcessOutputBuffer(), false);
-		//}
-
-		destroyContext();
-
-		//delete[] perLaunchIdxRayBudgets;
+		if (out_file.empty())
+		{
+			glutRun();
+		}
+		else
+		{
+			updateCamera();
+			context->launch(0, width, height);
+			// Adaptive test execute if active
+			if (usePostProcessing)
+			{
+				commandListAdaptive->execute();
+				sutil::displayBufferPPM(out_file.c_str(), getPostProcessOutputBuffer(), false);
+			}
+			else
+			{
+				sutil::displayBufferPPM(out_file.c_str(), getOutputBuffer(), false);
+			}
+			destroyContext();
+		}
 
         return( 0 );
 

@@ -18,13 +18,39 @@
     <ClCompile Include="..\src\optixHello\optixHello.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\optixHello\RayTraceRenderer.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\optixHello\optixHello_BackUp.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <None Include="..\src\optixHello\test.cu">
-      <Filter>CUDA Files</Filter>
-    </None>
     <None Include="..\src\optixHello\draw_color.cu">
       <Filter>CUDA Files</Filter>
     </None>
+    <None Include="..\src\optixHello\adaptive.cu">
+      <Filter>CUDA Files</Filter>
+    </None>
+    <None Include="..\src\optixHello\optixPathTracer.cu">
+      <Filter>CUDA Files</Filter>
+    </None>
+    <None Include="..\src\optixHello\parallelogram.cu">
+      <Filter>CUDA Files</Filter>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\src\optixHello\IOptixRenderContext.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\optixHello\RayTraceRenderContext.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\optixHello\optixPathTracer.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\optixHello\random.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

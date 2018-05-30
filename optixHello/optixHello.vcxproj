@@ -83,7 +83,7 @@
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
-      <AdditionalIncludeDirectories>C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\include;C:\Users\Greg\Documents\Visual Studio 2015\Projects\Master-Thesis\src\sutil;C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK;C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\include\optixu;C:\Users\Greg\Documents\Visual Studio 2015\Projects\Optix_Samples_Build;C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v8.0\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\include;C:\Users\Greg\Documents\Visual Studio 2015\Projects\Master-Thesis\src\sutil;C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK;C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\include\optixu;C:\Users\Greg\Documents\Visual Studio 2015\Projects\Optix_Samples_Build;C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v8.0\include;C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\support\freeglut\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AssemblerListingLocation>Debug/</AssemblerListingLocation>
       <BasicRuntimeChecks>EnableFastChecks</BasicRuntimeChecks>
       <CompileAs>CompileAsCpp</CompileAs>
@@ -330,10 +330,20 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\src\optixHello\optixHello.cpp" />
+    <ClCompile Include="..\src\optixHello\optixHello_BackUp.cpp" />
+    <ClCompile Include="..\src\optixHello\RayTraceRenderer.cpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="..\src\optixHello\draw_color.cu" />
-    <None Include="..\src\optixHello\test.cu" />
+    <None Include="..\src\optixHello\adaptive.cu" />
+    <None Include="..\src\optixHello\optixPathTracer.cu" />
+    <None Include="..\src\optixHello\parallelogram.cu" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\src\optixHello\IOptixRenderContext.h" />
+    <ClInclude Include="..\src\optixHello\optixPathTracer.h" />
+    <ClInclude Include="..\src\optixHello\random.h" />
+    <ClInclude Include="..\src\optixHello\RayTraceRenderContext.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

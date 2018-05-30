@@ -53,7 +53,7 @@ struct PerRayData_radiance
 
 rtDeclareVariable(PerRayData_radiance,
 	prd_radiance, 
-	rtPayload,							//This is a semantic nam, not an API declared variable name to bind user data to
+	rtPayload,							//This is a semantic name, not an API declared variable name to bind user data to
 	);
 
 RT_PROGRAM void closest_hit_radiance0()
@@ -135,84 +135,127 @@ RT_PROGRAM void pinhole_camera()
 	output_buffer[launch_index] = make_color(prd.result);
 }
 
-/* Adaptive additional rays variables */
-rtDeclareVariable(uint, max_per_launch_idx_ray_budget, , ) = static_cast<uint>(5u);		/* this variable will be written by the user */
-rtBuffer<uchar4, 2>   additional_rays_buffer;											/* this buffer will be initialized by the host, but must also be modified by the graphics device */
+///*--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+///* Adaptive additional rays variables */
+//rtDeclareVariable(uint, max_per_launch_idx_ray_budget, , ) = static_cast<uint>(5u);		/* this variable will be written by the user */
+//rtBuffer<uchar4, 2>   additional_rays_buffer;											/* this buffer will be initialized by the host, but must also be modified by the graphics device */
+//
+//rtBuffer<uchar4, 2>   input_buffer;														/* this buffer contains the initially rendered picture to be post processed */
+//rtBuffer<uchar4, 2>   post_process_output_buffer;										/* this buffer contains the result, processed with additional adaptive rays */
+//
+//rtDeclareVariable(float, window_size, , );
+//
+//static __device__ __inline__ float compute_window_variance(uint2 center, uint window_size)
+//{
+//	float mean = 0.f;
+//	float variance = 0.f;
+//	uint squared_window_size = window_size * window_size;
+//	uint2 upper_top_left_window = make_uint2(center.x - static_cast<uint>(static_cast<float>(window_size) / 2.f), center.y - static_cast<uint>(static_cast<float>(window_size) / 2.f));
+//	/* compute mean value */
+//	for (uint i = 0; i < squared_window_size; i++)
+//	{
+//		uint2 idx = make_uint2(static_cast<uint>(i / window_size) + upper_top_left_window.x, static_cast<uint>(i % window_size) + upper_top_left_window.y);
+//		float3 input_buffer_val = revert_color(input_buffer[idx]);
+//		mean += 1.f/3.f * (input_buffer_val.x + input_buffer_val.y + input_buffer_val.z);
+//	}
+//
+//	mean *= 1.f/ squared_window_size;
+//
+//	/* compute variance */
+//	for (uint i = 0; i < squared_window_size; i++)
+//	{
+//		uint2 idx = make_uint2(static_cast<uint>(i / window_size) + upper_top_left_window.x, static_cast<uint>(i % window_size) + upper_top_left_window.y);
+//		float3 input_buffer_val = revert_color(input_buffer[idx]);
+//		float var = 1.f / 3.f * (input_buffer_val.x + input_buffer_val.y + input_buffer_val.z);
+//		variance += var;
+//	}
+//
+//	variance = 1.f / squared_window_size * (variance) - (mean * mean);
+//
+//	return variance;
+//};
+//
+//static __device__ __inline__ uint compute_variance_based_additional_samples_number(uint window_size) 
+//{
+//	uint additional_samples_number = 0;
+//	/* check if box window is in buffer window */
+//	/* actually compute 'additional_samples_number' */
+//	return additional_samples_number;
+//};
+//
+//RT_PROGRAM void adaptive_camera()
+//{
+//	/* Testing for additional adaptive rays. Added jittering for test purposes. */
+//	
+//	/* 
+//		Postpone launching additional rays until first currently traced ray output is avaible (extend to neighborhood after success).
+//			- 1. Postponing will be done with a loop, which will run indefinitely and does nothing (maybe use observer pattern here, more elegant than having a loop with an if statement), 
+//				 until a condition is met, in this case when the output buffer has been written (-> no longer necessary, because the code advances after "rtTrace" only after its done).
+//			  2. Upon reaching the written output buffer state which i will modify the additional "additional_rays_buffer" values, which are initialized with ("max_per_launch_idx_ray_budget" + 1)
+//			     so that they contain an arbitary smaller or value (but only corresponding (neighboring) values to the current launchIdx).
+//			  3. After setting the current additional(, adaptive) ray budget i break/leave the loop and start another, that launches another loop, in which i launch additional rays,
+//			     according to the current budget and add/write the results into the output buffer.
+//		Additional adaptive rays count will be avaible in the "additional_rays_buffer"
+//	*/
+//	size_t2 screen = post_process_output_buffer.size();
+//
+//	float2 d = make_float2(launch_index) /
+//		make_float2(screen) * 2.f - 1.f;
+//
+//	uint additional_rays_count = static_cast<uint>(additional_rays_buffer[launch_index].x);
+//
+//	float3 ray_origin = eye;
+//	float3 ray_direction = normalize(d.x*U + d.y*V + W);
+//
+//	/* Make the following 'adaptive pass' test to a real adaptive pass (for that i must ensure, that the first resulting image is completely avaible). */
+//	//if (prd.done)
+//	//{
+//		additional_rays_count = static_cast<uint>(input_buffer[launch_index].x) % (max_per_launch_idx_ray_budget + 1u);
+//		//rtPrintf("Launch index: %u, %u; Additional rays count: %u !\n\n", launch_index.x, launch_index.y, additional_rays_count);
+//		float jitter = static_cast<float>(additional_rays_count) / static_cast<float>(max_per_launch_idx_ray_budget);
+//		float jitterScale = 0.1f;
+//		jitter = jitter * jitterScale;
+//
+//		if (additional_rays_count <= 0)
+//		{
+//			post_process_output_buffer[launch_index] = make_color(bad_color);
+//		}
+//
+//		while (additional_rays_count > 0u)
+//		{
+//			//rtPrintf("Additional rays left: %u !\n", additional_rays_count);
+//			float3 jittered_ray_origin;
+//
+//			jittered_ray_origin.x = ray_origin.x + jitter;
+//			jittered_ray_origin.y = ray_origin.y - jitter;
+//			jittered_ray_origin.z = ray_origin.z + jitter;
+//
+//			float3 jittered_ray_direction;
+//
+//			jittered_ray_direction.x = ray_direction.x + jitter;
+//			jittered_ray_direction.y = ray_direction.y - jitter;
+//			jittered_ray_direction.z = ray_direction.z + jitter;
+//
+//			Ray ray2(jittered_ray_origin, jittered_ray_direction, radiance_ray_type, scene_epsilon);
+//			PerRayData_radiance prd2;
+//			prd2.importance = 1.f;
+//			prd2.depth = 0;
+//			prd2.done = false;
+//
+//			rtTrace(top_object, ray2, prd2);
+//
+//			/*post_process_output_buffer[launch_index] = make_color(revert_color(input_buffer[launch_index]) + prd2.result);*/
+//			post_process_output_buffer[launch_index] = make_color(make_float3(1.0f));
+//			additional_rays_count--;
+//
+//			jitter = static_cast<float>(additional_rays_count) / static_cast<float>(max_per_launch_idx_ray_budget);
+//			jitterScale = jitterScale * -1.f;
+//			jitter = jitter * jitterScale;
+//		}
+//	//}
+//}
 
-rtBuffer<uchar4, 2>   input_buffer;														/* this buffer contains the initially rendered picture to be post processed */
-rtBuffer<uchar4, 2>   post_process_output_buffer;										/* this buffer contains the result, processed with additional adaptive rays */
-
-RT_PROGRAM void adaptive_camera()
-{
-	/* Testing for additional adaptive rays. Added jittering for test purposes. */
-	
-	/* 
-		Postpone launching additional rays until first currently traced ray output is avaible (extend to neighborhood after success).
-			- 1. Postponing will be done with a loop, which will run indefinitely and does nothing (maybe use observer pattern here, more elegant than having a loop with an if statement), 
-				 until a condition is met, in this case when the output buffer has been written (-> no longer necessary, because the code advances after "rtTrace" only after its done).
-			  2. Upon reaching the written output buffer state which i will modify the additional "additional_rays_buffer" values, which are initialized with ("max_per_launch_idx_ray_budget" + 1)
-			     so that they contain an arbitary smaller or value (but only corresponding (neighboring) values to the current launchIdx).
-			  3. After setting the current additional(, adaptive) ray budget i break/leave the loop and start another, that launches another loop, in which i launch additional rays,
-			     according to the current budget and add/write the results into the output buffer.
-		Additional adaptive rays count will be avaible in the "additional_rays_buffer"
-	*/
-	size_t2 screen = post_process_output_buffer.size();
-
-	float2 d = make_float2(launch_index) /
-		make_float2(screen) * 2.f - 1.f;
-
-	uint additional_rays_count = static_cast<uint>(additional_rays_buffer[launch_index].x);
-
-	float3 ray_origin = eye;
-	float3 ray_direction = normalize(d.x*U + d.y*V + W);
-
-	/* Make the following 'adaptive pass' test to a real adaptive pass (for that i must ensure, that the first resulting image is completely avaible). */
-	//if (prd.done)
-	//{
-		additional_rays_count = static_cast<uint>(input_buffer[launch_index].x) % (max_per_launch_idx_ray_budget + 1u);
-		//rtPrintf("Launch index: %u, %u; Additional rays count: %u !\n\n", launch_index.x, launch_index.y, additional_rays_count);
-		float jitter = static_cast<float>(additional_rays_count) / static_cast<float>(max_per_launch_idx_ray_budget);
-		float jitterScale = 0.1f;
-		jitter = jitter * jitterScale;
-
-		if (additional_rays_count <= 0)
-		{
-			post_process_output_buffer[launch_index] = make_color(bad_color);
-		}
-
-		while (additional_rays_count > 0u)
-		{
-			//rtPrintf("Additional rays left: %u !\n", additional_rays_count);
-			float3 jittered_ray_origin;
-
-			jittered_ray_origin.x = ray_origin.x + jitter;
-			jittered_ray_origin.y = ray_origin.y - jitter;
-			jittered_ray_origin.z = ray_origin.z + jitter;
-
-			float3 jittered_ray_direction;
-
-			jittered_ray_direction.x = ray_direction.x + jitter;
-			jittered_ray_direction.y = ray_direction.y - jitter;
-			jittered_ray_direction.z = ray_direction.z + jitter;
-
-			Ray ray2(jittered_ray_origin, jittered_ray_direction, radiance_ray_type, scene_epsilon);
-			PerRayData_radiance prd2;
-			prd2.importance = 1.f;
-			prd2.depth = 0;
-			prd2.done = false;
-
-			rtTrace(top_object, ray2, prd2);
-
-			/*post_process_output_buffer[launch_index] = make_color(revert_color(input_buffer[launch_index]) + prd2.result);*/
-			post_process_output_buffer[launch_index] = make_color(make_float3(1.0f));
-			additional_rays_count--;
-
-			jitter = static_cast<float>(additional_rays_count) / static_cast<float>(max_per_launch_idx_ray_budget);
-			jitterScale = jitterScale * -1.f;
-			jitter = jitter * jitterScale;
-		}
-	//}
-}
+/*--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
 
 RT_PROGRAM void exception()
 {
