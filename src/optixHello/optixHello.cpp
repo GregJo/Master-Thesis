@@ -110,6 +110,26 @@ Learn about the mechanism, that allows optix to decide how many rays will be sen
 
 After that i should be able to make a proposal of the topic my master thesis will be about.
 */
+
+/*
+Currently i stand before one very obvious problem in my programming task, one simply must not read and write from/into the one and same buffer 
+when working with multiple threads, which is obvious considering that i am working on the GPU.
+Right now i can think of two solutions:
+	1. I may "simply" do an additional pass computing the addtional adaptive sample map for the next render pass.
+	   Here i have to be very careful to only compute and write for only one launch index/pixel of a small window, for the whole small window,
+	   in order to avoid race conditions and multiple write accesses, which would cause the program to crash (which should be rather easy, 
+	   if guarantee to do it only on the center pixels of the small windows).
+	   With this mehtod i would have the advantage of doing it once for the whole adaptive samples map.
+	   The disadvantage would be having another pass, which might be "unnecessarily" imperformant.
+	   Also the method might not work if my neighborhood is not exactly known beforehand or not following an easy scheme (like the window neighborhood 
+	   i already mentioned, in a simple case).
+	2. I do redundant computations before launching each and every ray based on the input, which i would access read only. 
+	   The advantage is not having to take care of parallel simultanious write access handling.
+	   Another advantage is that i can handle more complex methods with an unknown neighborhood size and shape.
+	   The disadvantage is that i have to do redundant computations for lets say a window neighborhood, which might be even more imperformant
+	   than the additional pass, but not sure, due to highly parallel nature of GPU.
+*/
+
 #ifdef __APPLE__
 #  include <GLUT/glut.h>
 #else
@@ -151,8 +171,10 @@ uint32_t       width = 512;
 uint32_t       height = 512;
 bool           use_pbo = true;
 
+//bool initial_render_run = true;
+
 int            frame_number = 1;
-int            sqrt_num_samples = 2;
+int            sqrt_num_samples = 1;
 int            rr_begin_depth = 1;
 Program        pgram_intersection = 0;
 Program        pgram_bounding_box = 0;
@@ -280,6 +302,9 @@ void createContext()
 	//context->setEntryPointCount(1);
 	context->setEntryPointCount(2);
 	context->setStackSize(1800);
+
+	context->setPrintEnabled(true);
+	context->setPrintBufferSize(2048);
 
 	context["scene_epsilon"]->setFloat(1.e-3f);
 	context["pathtrace_ray_type"]->setUint(0u);
@@ -548,7 +573,7 @@ void setupPostprocessing()
 	commandListAdaptive = context->createCommandList();
 
 	// Input buffer for post processing
-	setupAdditionalRaysBuffer();
+	//setupAdditionalRaysBuffer();
 
 	commandListAdaptive->appendLaunch(1, width, height);
 	commandListAdaptive->finalize();
@@ -676,6 +701,8 @@ void glutDisplay()
 		static unsigned frame_count = 0;
 		sutil::displayFps(frame_count++);
 	}
+
+	//initial_render_run = false;
 
 	glutSwapBuffers();
 }
@@ -835,7 +862,7 @@ int main(int argc, char* argv[])
 		setupCamera();
 		loadComplexGeometry();
 
-		// Adaptive test setup
+		// Adaptive post processing setup
 		setupPostprocessing();
 
 		context->validate();

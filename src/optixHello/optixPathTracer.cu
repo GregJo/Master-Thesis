@@ -277,13 +277,195 @@ RT_PROGRAM void diffuseTextured()
 
 /*--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
 /* Adaptive additional rays variables */
-rtDeclareVariable(uint, max_per_launch_idx_ray_budget, , ) = static_cast<uint>(2u);		/* this variable will be written by the user */
-rtBuffer<uchar4, 2>   additional_rays_buffer;										/* this buffer will be initialized by the host, but must also be modified by the graphics device */
+rtDeclareVariable(unsigned int, max_per_launch_idx_ray_budget, , ) = static_cast<uint>(5u);		/* this variable will be written by the user */
+//rtDeclareVariable(int, additional_sample_map_written, , ) = 0;
+//rtBuffer<uchar4, 2>   additional_rays_buffer;										/* this buffer will be initialized by the host, but must also be modified by the graphics device */
 
 rtBuffer<float4, 2>   input_buffer;														/* this buffer contains the initially rendered picture to be post processed */
 rtBuffer<float4, 2>   post_process_output_buffer;										/* this buffer contains the result, processed with additional adaptive rays */
 
 rtDeclareVariable(float, window_size, , );
+
+static __device__ __inline__ float compute_window_variance(uint2 center, uint window_size)
+{
+	size_t2 screen = input_buffer.size();
+
+	float mean = 0.f;
+	float variance = 0.f;
+	uint squared_window_size = window_size * window_size;
+	uint half_window_size = (window_size / 2) + (window_size % 2);
+	uint2 top_left_window_corner = make_uint2(center.x - half_window_size, center.y - half_window_size);
+
+	//rtPrintf("\nTop left window corner: [ %d, %d ]\n", top_left_window_corner.x, top_left_window_corner.y);
+
+	/* compute mean value */
+	for (uint i = 0; i < squared_window_size; i++)
+	{
+		uint2 idx = make_uint2((i % window_size + top_left_window_corner.x) % screen.x, (i / window_size + top_left_window_corner.y) % screen.y);
+		float3 input_buffer_val = make_float3(input_buffer[idx].x, input_buffer[idx].y, input_buffer[idx].z);
+		mean += 1.f/3.f * (input_buffer_val.x + input_buffer_val.y + input_buffer_val.z);
+		//if (center.x + center.y < 20)
+		//{
+		//	//rtPrintf("Current 1D index: %d\n", i);
+		//	//rtPrintf("Current relative 2D index: [ %d, %d ]\n", i % window_size, i / window_size);
+		//	rtPrintf("Current absolute 2D index: [ %d, %d ]\n", idx.x, idx.y);
+		//}
+	}
+
+	/*mean *= 1.f/ squared_window_size;*/
+	mean = 1.f / squared_window_size * mean;
+
+	/* compute variance */
+	for (uint i = 0; i < squared_window_size; i++)
+	{
+		uint2 idx = make_uint2((i % window_size + top_left_window_corner.x) % screen.x, (i / window_size + top_left_window_corner.y) % screen.y);
+		float3 input_buffer_val = make_float3(input_buffer[idx].x, input_buffer[idx].y, input_buffer[idx].z);
+		float var = 1.f / 3.f * (input_buffer_val.x + input_buffer_val.y + input_buffer_val.z);
+		/*variance += var * var;*/
+		variance += (var * var - 2.0f * mean * var + mean * mean);
+	}
+
+	//variance = 1.f / squared_window_size * (variance) - (mean * mean);
+	variance = 1.f / squared_window_size * variance;
+
+	//rtPrintf("Current variance: %f\n", variance);
+
+	return variance;
+};
+
+static __device__ __inline__ void window_test(uint2 center, uint window_size)
+{
+	size_t2 screen = input_buffer.size();
+
+	float mean = 0.f;
+	float variance = 0.f;
+	uint squared_window_size = window_size * window_size;
+	uint half_window_size = (window_size / 2) + (window_size % 2);
+	uint2 top_left_window_corner = make_uint2(center.x - half_window_size, center.y - half_window_size);
+
+	//rtPrintf("\nTop left window corner: [ %d, %d ]\n", top_left_window_corner.x, top_left_window_corner.y);
+
+	/* compute mean value */
+	for (uint i = 0; i < squared_window_size; i++)
+	{
+		uint2 idx = make_uint2((i % window_size + top_left_window_corner.x) % screen.x, (i / window_size + top_left_window_corner.y) % screen.y);
+		if (i % window_size >= i / window_size)
+		{
+			//rtPrintf("Current 1D index: %d\n", i);
+			//rtPrintf("Current relative 2D index: [ %d, %d ]\n", i % window_size, i / window_size);
+			post_process_output_buffer[idx] = make_float4(100.0f,0.0f,100.0f,1.0f);
+			//rtPrintf("Current absolute 2D index: [ %d, %d ]\n", idx.x, idx.y);
+		}
+	}
+};
+
+static __device__ __inline__ uint compute_samples_number(float variance)
+{
+	uint samples_number = static_cast<uint>(clamp(static_cast<float>(variance * max_per_launch_idx_ray_budget), 0.0f, static_cast<float>(max_per_launch_idx_ray_budget)));
+	return samples_number;
+};
+
+static __device__ __inline__ void write_additional_samples_number(uint2 window_center, uint window_size, uint samples_number)
+{
+	uint half_window_size = (window_size / 2) + (window_size % 2 * 1);
+	uint squared_window_size = window_size * window_size;
+	uint2 upper_top_left_window = make_uint2(window_center.x - half_window_size, window_center.y - half_window_size);
+	for (size_t i = 0; i < squared_window_size; i++)
+	{
+		uint2 idx = make_uint2(static_cast<uint>(i / window_size) + upper_top_left_window.x, static_cast<uint>(i % window_size) + upper_top_left_window.y);
+		//additional_rays_buffer[idx] = make_uchar4(samples_number, samples_number, samples_number, samples_number);
+	}
+};
+
+static __device__ __inline__ void compute_sample_num_map(uint window_size)
+{
+	uint additional_samples_number = 0;
+
+	size_t2 screen = input_buffer.size();
+
+	uint modulo_width = screen.x % window_size;
+	uint modulo_height = screen.y % window_size;
+
+	uint horizontal_padding = static_cast<uint>((screen.x - modulo_width) / 2);
+	uint vertical_padding = static_cast<uint>((screen.x - modulo_width) / 2);
+
+	uint2 window_center = make_uint2(0, 0);
+
+	uint half_window_size = (window_size / 2) + (window_size % 2 * 1);
+
+	for (size_t i = 0; i < modulo_width * modulo_height; i++)
+	{
+		window_center.x = horizontal_padding + half_window_size + i / modulo_width * window_size;
+		window_center.y = vertical_padding + half_window_size + i % modulo_height * window_size;
+		
+		float variance = compute_window_variance(window_center, window_size);
+
+		/* actually compute 'additional_samples_number' */
+
+		/* write 'additional_samples_number' into according window of 2D buffer 'additional_rays_buffer' */
+		write_additional_samples_number(window_center, window_size, 0);
+	}
+
+};
+
+static __device__ __inline__ uint compute_current_samples_number(uint2 current_launch_index, uint window_size) 
+{
+	uint sample_number = 0;
+
+	uint additional_samples_number = 0;
+
+	size_t2 screen = input_buffer.size();
+
+	uint times_width = screen.x / window_size;
+	uint times_height = screen.y / window_size;
+
+	uint horizontal_padding = static_cast<uint>((screen.x - (times_width * window_size)) / 2);
+	uint vertical_padding = static_cast<uint>((screen.y - (times_height * window_size)) / 2);
+
+	uint half_window_size = (window_size / 2) + (window_size % 2);
+
+	uint2 times_launch_index = make_uint2(((current_launch_index.x / window_size) * window_size) % screen.x, ((current_launch_index.y / window_size) * window_size) % screen.y);
+
+	uint2 current_window_center = make_uint2(times_launch_index.x + horizontal_padding + half_window_size, times_launch_index.y + vertical_padding + half_window_size);
+
+	float variance = compute_window_variance(current_window_center, window_size);
+
+	sample_number = compute_samples_number(10.0f * variance);
+
+	//rtPrintf("\nCurrent launch index: [ %d, %d ]\n", current_launch_index.x, current_launch_index.y);
+	//rtPrintf("Modulo launch index: [ %d, %d ]\n", modulo_launch_index.x, modulo_launch_index.y);
+	//rtPrintf("Current window center: [ %d, %d ]\n", current_window_center.x, current_window_center.y);
+	//rtPrintf("Current variance: %f\n", variance);
+	if (sample_number >= max_per_launch_idx_ray_budget)
+	{
+		rtPrintf("Current samples number: %d\n\n", sample_number);
+	}
+
+	return sample_number;
+};
+
+static __device__ __inline__ void compute_current_window_test(uint2 current_launch_index, uint window_size)
+{
+	uint sample_number = 0;
+
+	uint additional_samples_number = 0;
+
+	size_t2 screen = input_buffer.size();
+
+	uint times_width = screen.x / window_size;
+	uint times_height = screen.y / window_size;
+
+	uint horizontal_padding = static_cast<uint>((screen.x - (times_width * window_size)) / 2);
+	uint vertical_padding = static_cast<uint>((screen.y - (times_height * window_size)) / 2);
+
+	uint half_window_size = (window_size / 2) + (window_size % 2);
+
+	uint2 times_launch_index = make_uint2(((current_launch_index.x / window_size) * window_size) % screen.x, ((current_launch_index.y / window_size) * window_size) % screen.y);
+
+	uint2 current_window_center = make_uint2(times_launch_index.x + horizontal_padding + half_window_size, times_launch_index.y + vertical_padding + half_window_size);
+
+	window_test(current_window_center, window_size);
+};
 
 RT_PROGRAM void pathtrace_camera_adaptive()
 {
@@ -293,74 +475,95 @@ RT_PROGRAM void pathtrace_camera_adaptive()
 	float2 pixel = (make_float2(launch_index)) * inv_screen - 1.f;
 
 	float2 jitter_scale = inv_screen / sqrt_num_samples;
-	unsigned int samples_per_pixel = static_cast<unsigned int>(additional_rays_buffer[launch_index].x);
+	unsigned int adaptive_samples_per_pixel = compute_current_samples_number(launch_index, 19);//max_per_launch_idx_ray_budget;//static_cast<unsigned int>(additional_rays_buffer[launch_index].x);
+	unsigned int current_samples_per_pixel = adaptive_samples_per_pixel;
 	float3 result = make_float3(0.0f);
 
-	unsigned int seed = tea<16>(screen.x*launch_index.y + launch_index.x, frame_number);
-	do
+	unsigned int adaptive_sqrt_num_samples = sqrtf(static_cast<float>(adaptive_samples_per_pixel));
+
+	if (!adaptive_sqrt_num_samples)
 	{
-		//
-		// Sample pixel using jittering
-		//
-		unsigned int x = samples_per_pixel%sqrt_num_samples;
-		unsigned int y = samples_per_pixel / sqrt_num_samples;
-		float2 jitter = make_float2(x - rnd(seed), y - rnd(seed));
-		float2 d = pixel + jitter*jitter_scale;
-		float3 ray_origin = eye;
-		float3 ray_direction = normalize(d.x*U + d.y*V + W);
+		++adaptive_sqrt_num_samples;
+	}
 
-		// Initialze per-ray data
-		PerRayData_pathtrace prd;
-		prd.result = make_float3(0.f);
-		prd.attenuation = make_float3(1.f);
-		prd.countEmitted = true;
-		prd.done = false;
-		prd.seed = seed;
-		prd.depth = 0;
+	unsigned int seed = tea<16>(screen.x*launch_index.y + launch_index.x, frame_number);
 
-		// Each iteration is a segment of the ray path.  The closest hit will
-		// return new segments to be traced here.
-		for (;;)
+	float3 pixel_color = make_float3(input_buffer[launch_index]);
+
+	if (current_samples_per_pixel)
+	{
+		do
 		{
-			Ray ray = make_Ray(ray_origin, ray_direction, pathtrace_ray_type, scene_epsilon, RT_DEFAULT_MAX);
-			rtTrace(top_object, ray, prd);
+			//
+			// Sample pixel using jittering
+			//
+			unsigned int x = adaptive_samples_per_pixel % adaptive_sqrt_num_samples;
+			unsigned int y = adaptive_samples_per_pixel / adaptive_sqrt_num_samples;
+			float2 jitter = make_float2(x - rnd(seed), y - rnd(seed));
+			float2 d = pixel + jitter*jitter_scale;
+			float3 ray_origin = eye;
+			float3 ray_direction = normalize(d.x*U + d.y*V + W);
 
-			if (prd.done)
-			{
-				// We have hit the background or a luminaire
-				prd.result += prd.radiance * prd.attenuation;
-				break;
-			}
+			// Initialze per-ray data
+			PerRayData_pathtrace prd;
+			prd.result = make_float3(0.f);
+			prd.attenuation = make_float3(1.f);
+			prd.countEmitted = true;
+			prd.done = false;
+			prd.seed = seed;
+			prd.depth = 0;
 
-			// Russian roulette termination 
-			if (prd.depth >= rr_begin_depth)
+			// Each iteration is a segment of the ray path.  The closest hit will
+			// return new segments to be traced here.
+			for (;;)
 			{
-				float pcont = fmaxf(prd.attenuation);
-				if (rnd(prd.seed) >= pcont)
+				Ray ray = make_Ray(ray_origin, ray_direction, pathtrace_ray_type, scene_epsilon, RT_DEFAULT_MAX);
+				rtTrace(top_object, ray, prd);
+
+				if (prd.done)
+				{
+					// We have hit the background or a luminaire
+					prd.result += prd.radiance * prd.attenuation;
 					break;
-				prd.attenuation /= pcont;
+				}
+
+				// Russian roulette termination 
+				if (prd.depth >= rr_begin_depth)
+				{
+					float pcont = fmaxf(prd.attenuation);
+					if (rnd(prd.seed) >= pcont)
+						break;
+					prd.attenuation /= pcont;
+				}
+
+				prd.depth++;
+				prd.result += prd.radiance * prd.attenuation;
+
+				// Update ray data for the next path segment
+				ray_origin = prd.origin;
+				ray_direction = prd.direction;
 			}
 
-			prd.depth++;
-			prd.result += prd.radiance * prd.attenuation;
+			result += prd.result;
+			seed = prd.seed;
+		} while (--current_samples_per_pixel);
 
-			// Update ray data for the next path segment
-			ray_origin = prd.origin;
-			ray_direction = prd.direction;
+		pixel_color = result / (adaptive_sqrt_num_samples*adaptive_sqrt_num_samples);
+
+		if (adaptive_samples_per_pixel > 1)
+		{
+			pixel_color = make_float3(100.0f, 0.0f, 100.0f);
 		}
-
-		result += prd.result;
-		seed = prd.seed;
-	} while (--samples_per_pixel);
-
+	}
 	//
 	// Update the output buffer
 	//
-	float3 pixel_color = result / (sqrt_num_samples*sqrt_num_samples);
 
 	float a = 1.0f / (float)frame_number;
 	float3 old_color = make_float3(input_buffer[launch_index]);
 	post_process_output_buffer[launch_index] = make_float4(lerp(old_color, pixel_color, a), 1.0f);
+
+	//compute_current_window_test(launch_index, 5);
 }
 
 //
