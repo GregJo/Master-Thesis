@@ -13,6 +13,9 @@
     <Filter Include="Header Files">
       <UniqueIdentifier>{b143228f-2438-4717-93d4-8d76fa08721c}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Header Files\Camera">
+      <UniqueIdentifier>{c38d8328-5497-4457-9cf3-7efce88dfd83}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\src\optixHello\optixHello.cpp">
@@ -51,6 +54,12 @@
     </ClInclude>
     <ClInclude Include="..\src\optixHello\random.h">
       <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\optixHello\Camera.h">
+      <Filter>Header Files\Camera</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\optixHello\TrackballCamera.h">
+      <Filter>Header Files\Camera</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>

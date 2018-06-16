@@ -79,6 +79,38 @@ rtDeclareVariable(unsigned int,  pathtrace_shadow_ray_type, , );
 rtBuffer<float4, 2>              output_buffer;
 rtBuffer<ParallelogramLight>     lights;
 
+// Adaptive post processing variables and buffers
+rtBuffer<int4, 2>				 additional_rays_buffer_input;										/* this buffer will be initialized by the host, but must also be modified by the graphics device */
+rtBuffer<float4, 2>              per_window_variance_buffer_input;
+
+rtDeclareVariable(unsigned int, window_size, , );
+rtDeclareVariable(unsigned int, max_ray_budget_total, , ) = static_cast<uint>(50u);
+rtDeclareVariable(unsigned int, max_per_launch_idx_ray_budget, , ) = static_cast<uint>(5u);		/* this variable will be written by the user */
+rtDeclareVariable(int, camera_changed, , );
+
+static __device__ __inline__ void reset_additional_rays_buffer(uint2 current_launch_index)
+{
+	additional_rays_buffer_input[current_launch_index] = make_int4(static_cast<int>(max_ray_budget_total));
+};
+
+static __device__ __inline__ uint2 compute_variance_window_center(uint2 current_launch_index, uint window_size)
+{
+	size_t2 screen = output_buffer.size();
+
+	uint times_width = screen.x / window_size;
+	uint times_height = screen.y / window_size;
+
+	uint horizontal_padding = static_cast<uint>((screen.x - (times_width * window_size)) / 2);
+	uint vertical_padding = static_cast<uint>((screen.y - (times_height * window_size)) / 2);
+
+	uint half_window_size = (window_size / 2) + (window_size % 2);
+
+	uint2 times_launch_index = make_uint2(((current_launch_index.x / window_size) * window_size) % screen.x, ((current_launch_index.y / window_size) * window_size) % screen.y);
+
+	uint2 current_window_center = make_uint2(times_launch_index.x + horizontal_padding + half_window_size, times_launch_index.y + vertical_padding + half_window_size);
+
+	return current_window_center;
+};
 
 RT_PROGRAM void pathtrace_camera()
 {
@@ -163,6 +195,14 @@ RT_PROGRAM void pathtrace_camera()
     {
         output_buffer[launch_index] = make_float4(pixel_color, 1.0f);
     }
+
+	per_window_variance_buffer_input[compute_variance_window_center(launch_index, window_size)] = make_float4(-1.0f);
+
+	if (camera_changed == 1)
+	{
+		//rtPrintf("Reset additional rays buffer!!!\n\n");
+		reset_additional_rays_buffer(launch_index);
+	}
 }
 
 
@@ -277,14 +317,15 @@ RT_PROGRAM void diffuseTextured()
 
 /*--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
 /* Adaptive additional rays variables */
-rtDeclareVariable(unsigned int, max_per_launch_idx_ray_budget, , ) = static_cast<uint>(5u);		/* this variable will be written by the user */
-//rtDeclareVariable(int, additional_sample_map_written, , ) = 0;
-//rtBuffer<uchar4, 2>   additional_rays_buffer;										/* this buffer will be initialized by the host, but must also be modified by the graphics device */
+//rtDeclareVariable(unsigned int, max_per_launch_idx_ray_budget, , ) = static_cast<uint>(5u);		/* this variable will be written by the user */
+rtBuffer<int4, 2>   additional_rays_buffer_output;										/* this buffer will be initialized by the host, but must also be modified by the graphics device */
+
+rtBuffer<float4, 2>	  per_window_variance_buffer_output;
 
 rtBuffer<float4, 2>   input_buffer;														/* this buffer contains the initially rendered picture to be post processed */
 rtBuffer<float4, 2>   post_process_output_buffer;										/* this buffer contains the result, processed with additional adaptive rays */
 
-rtDeclareVariable(float, window_size, , );
+//rtDeclareVariable(float, window_size, , );
 
 static __device__ __inline__ float compute_window_variance(uint2 center, uint window_size)
 {
@@ -292,43 +333,53 @@ static __device__ __inline__ float compute_window_variance(uint2 center, uint wi
 
 	float mean = 0.f;
 	float variance = 0.f;
-	uint squared_window_size = window_size * window_size;
-	uint half_window_size = (window_size / 2) + (window_size % 2);
-	uint2 top_left_window_corner = make_uint2(center.x - half_window_size, center.y - half_window_size);
-
-	//rtPrintf("\nTop left window corner: [ %d, %d ]\n", top_left_window_corner.x, top_left_window_corner.y);
-
-	/* compute mean value */
-	for (uint i = 0; i < squared_window_size; i++)
+	if (per_window_variance_buffer_output[center].x < 0.0f)
 	{
-		uint2 idx = make_uint2((i % window_size + top_left_window_corner.x) % screen.x, (i / window_size + top_left_window_corner.y) % screen.y);
-		float3 input_buffer_val = make_float3(input_buffer[idx].x, input_buffer[idx].y, input_buffer[idx].z);
-		mean += 1.f/3.f * (input_buffer_val.x + input_buffer_val.y + input_buffer_val.z);
-		//if (center.x + center.y < 20)
-		//{
-		//	//rtPrintf("Current 1D index: %d\n", i);
-		//	//rtPrintf("Current relative 2D index: [ %d, %d ]\n", i % window_size, i / window_size);
-		//	rtPrintf("Current absolute 2D index: [ %d, %d ]\n", idx.x, idx.y);
-		//}
+		uint squared_window_size = window_size * window_size;
+		uint half_window_size = (window_size / 2) + (window_size % 2);
+		uint2 top_left_window_corner = make_uint2(center.x - half_window_size, center.y - half_window_size);
+
+		//rtPrintf("\nTop left window corner: [ %d, %d ]\n", top_left_window_corner.x, top_left_window_corner.y);
+
+		/* compute mean value */
+		for (uint i = 0; i < squared_window_size; i++)
+		{
+			uint2 idx = make_uint2((i % window_size + top_left_window_corner.x) % screen.x, (i / window_size + top_left_window_corner.y) % screen.y);
+			float3 input_buffer_val = make_float3(input_buffer[idx].x, input_buffer[idx].y, input_buffer[idx].z);
+			mean += 1.f / 3.f * (input_buffer_val.x + input_buffer_val.y + input_buffer_val.z);
+			//if (center.x + center.y < 20)
+			//{
+			//	//rtPrintf("Current 1D index: %d\n", i);
+			//	//rtPrintf("Current relative 2D index: [ %d, %d ]\n", i % window_size, i / window_size);
+			//	rtPrintf("Current absolute 2D index: [ %d, %d ]\n", idx.x, idx.y);
+			//}
+		}
+
+		/*mean *= 1.f/ squared_window_size;*/
+		mean = 1.f / squared_window_size * mean;
+
+		/* compute variance */
+		for (uint i = 0; i < squared_window_size; i++)
+		{
+			uint2 idx = make_uint2((i % window_size + top_left_window_corner.x) % screen.x, (i / window_size + top_left_window_corner.y) % screen.y);
+			float3 input_buffer_val = make_float3(input_buffer[idx].x, input_buffer[idx].y, input_buffer[idx].z);
+			float var = 1.f / 3.f * (input_buffer_val.x + input_buffer_val.y + input_buffer_val.z);
+			/*variance += var * var;*/
+			variance += (var * var - 2.0f * mean * var + mean * mean);
+		}
+
+		//variance = 1.f / squared_window_size * (variance) - (mean * mean);
+		variance = 1.f / squared_window_size * variance;
+
+		//rtPrintf("Current variance: %f\n", variance);
+
+		per_window_variance_buffer_output[center] = make_float4(variance);
 	}
-
-	/*mean *= 1.f/ squared_window_size;*/
-	mean = 1.f / squared_window_size * mean;
-
-	/* compute variance */
-	for (uint i = 0; i < squared_window_size; i++)
+	else
 	{
-		uint2 idx = make_uint2((i % window_size + top_left_window_corner.x) % screen.x, (i / window_size + top_left_window_corner.y) % screen.y);
-		float3 input_buffer_val = make_float3(input_buffer[idx].x, input_buffer[idx].y, input_buffer[idx].z);
-		float var = 1.f / 3.f * (input_buffer_val.x + input_buffer_val.y + input_buffer_val.z);
-		/*variance += var * var;*/
-		variance += (var * var - 2.0f * mean * var + mean * mean);
+		//rtPrintf("Variance reused at center [ %d , %d ]\n" , center.x, center.y);
+		variance = per_window_variance_buffer_output[center].x;
 	}
-
-	//variance = 1.f / squared_window_size * (variance) - (mean * mean);
-	variance = 1.f / squared_window_size * variance;
-
-	//rtPrintf("Current variance: %f\n", variance);
 
 	return variance;
 };
@@ -359,9 +410,23 @@ static __device__ __inline__ void window_test(uint2 center, uint window_size)
 	}
 };
 
-static __device__ __inline__ uint compute_samples_number(float variance)
+static __device__ __inline__ uint compute_samples_number(uint2 current_launch_index, float variance)
 {
-	uint samples_number = static_cast<uint>(clamp(static_cast<float>(variance * max_per_launch_idx_ray_budget), 0.0f, static_cast<float>(max_per_launch_idx_ray_budget)));
+	uint samples_number = 0;
+
+	//if (additional_rays_buffer_output[current_launch_index].x <= 0)
+	//{
+	//	rtPrintf("Current samples number: %d\n\n", additional_rays_buffer_output[current_launch_index].x);
+	//}
+
+	if (additional_rays_buffer_output[current_launch_index].x > 0)
+	{
+		samples_number = static_cast<uint>(clamp(static_cast<float>(variance * max_per_launch_idx_ray_budget), 0.0f, static_cast<float>(max_per_launch_idx_ray_budget)));
+		additional_rays_buffer_output[current_launch_index] = make_int4(additional_rays_buffer_output[current_launch_index].x - static_cast<int>(samples_number));
+	}
+
+	//rtPrintf("Current samples number: %d\n\n", samples_number);
+
 	return samples_number;
 };
 
@@ -430,16 +495,16 @@ static __device__ __inline__ uint compute_current_samples_number(uint2 current_l
 
 	float variance = compute_window_variance(current_window_center, window_size);
 
-	sample_number = compute_samples_number(10.0f * variance);
+	sample_number = compute_samples_number(current_launch_index, (30.0f * variance));
 
 	//rtPrintf("\nCurrent launch index: [ %d, %d ]\n", current_launch_index.x, current_launch_index.y);
 	//rtPrintf("Modulo launch index: [ %d, %d ]\n", modulo_launch_index.x, modulo_launch_index.y);
 	//rtPrintf("Current window center: [ %d, %d ]\n", current_window_center.x, current_window_center.y);
 	//rtPrintf("Current variance: %f\n", variance);
-	if (sample_number >= max_per_launch_idx_ray_budget)
-	{
-		rtPrintf("Current samples number: %d\n\n", sample_number);
-	}
+	//if (sample_number >= max_per_launch_idx_ray_budget)
+	//{
+	//	rtPrintf("Current samples number: %d\n\n", sample_number);
+	//}
 
 	return sample_number;
 };
@@ -469,13 +534,15 @@ static __device__ __inline__ void compute_current_window_test(uint2 current_laun
 
 RT_PROGRAM void pathtrace_camera_adaptive()
 {
+	//rtPrintf("Current samples number: %d\n\n", additional_rays_buffer_output[launch_index].x);
+
 	size_t2 screen = input_buffer.size();
 
 	float2 inv_screen = 1.0f / make_float2(screen) * 2.f;
 	float2 pixel = (make_float2(launch_index)) * inv_screen - 1.f;
 
 	float2 jitter_scale = inv_screen / sqrt_num_samples;
-	unsigned int adaptive_samples_per_pixel = compute_current_samples_number(launch_index, 19);//max_per_launch_idx_ray_budget;//static_cast<unsigned int>(additional_rays_buffer[launch_index].x);
+	unsigned int adaptive_samples_per_pixel = compute_current_samples_number(launch_index, window_size);//max_per_launch_idx_ray_budget;//static_cast<unsigned int>(additional_rays_buffer[launch_index].x);
 	unsigned int current_samples_per_pixel = adaptive_samples_per_pixel;
 	float3 result = make_float3(0.0f);
 

@@ -62,7 +62,7 @@
     <TargetExt Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">.exe</TargetExt>
     <LinkIncremental Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</LinkIncremental>
     <GenerateManifest Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</GenerateManifest>
-    <OutDir Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:\Users\Greg\Documents\Visual Studio 2015\Projects\Optix_Samples_Build\bin\Release\</OutDir>
+    <OutDir Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:\Users\Greg\Documents\Visual Studio 2015\Projects\Master-Thesis\bin\Release\</OutDir>
     <IntDir Condition="'$(Configuration)|$(Platform)'=='Release|x64'">optixHello.dir\Release\</IntDir>
     <TargetName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">optixHello</TargetName>
     <TargetExt Condition="'$(Configuration)|$(Platform)'=='Release|x64'">.exe</TargetExt>
@@ -83,7 +83,7 @@
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
-      <AdditionalIncludeDirectories>C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\include;C:\Users\Greg\Documents\Visual Studio 2015\Projects\Master-Thesis\src\sutil;C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK;C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\include\optixu;C:\Users\Greg\Documents\Visual Studio 2015\Projects\Optix_Samples_Build;C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v8.0\include;C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\support\freeglut\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\include;C:\Users\Greg\Documents\Visual Studio 2015\Projects\Master-Thesis\src\sutil;C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK;C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\include\optixu;C:\Users\Greg\Documents\Visual Studio 2015\Projects\Optix_Samples_Build;C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v8.0\include;C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\support\freeglut\include;C:\Users\Greg\Documents\Visual Studio 2015\Projects\Master-Thesis\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AssemblerListingLocation>Debug/</AssemblerListingLocation>
       <BasicRuntimeChecks>EnableFastChecks</BasicRuntimeChecks>
       <CompileAs>CompileAsCpp</CompileAs>
@@ -113,7 +113,7 @@
       <ProxyFileName>%(Filename)_p.c</ProxyFileName>
     </Midl>
     <Link>
-      <AdditionalDependencies>..\lib\Debug\sutil_sdk.lib;C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\lib64\optix.1.lib;C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\lib64\optixu.1.lib;C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\support\freeglut\win64\Release\freeglut.lib;opengl32.lib;glu32.lib;C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v8.0\lib\x64\nvrtc.lib;winmm.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
+      <AdditionalDependencies>..\lib\glfw\glfw3_d.lib;..\lib\Debug\sutil_sdk.lib;C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\lib64\optix.1.lib;C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\lib64\optixu.1.lib;C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\support\freeglut\win64\Release\freeglut.lib;opengl32.lib;glu32.lib;C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v8.0\lib\x64\nvrtc.lib;winmm.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
       <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalOptions>%(AdditionalOptions) /machine:x64</AdditionalOptions>
       <GenerateDebugInformation>true</GenerateDebugInformation>
@@ -340,10 +340,12 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
     <None Include="..\src\optixHello\parallelogram.cu" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="..\src\optixHello\Camera.h" />
     <ClInclude Include="..\src\optixHello\IOptixRenderContext.h" />
     <ClInclude Include="..\src\optixHello\optixPathTracer.h" />
     <ClInclude Include="..\src\optixHello\random.h" />
     <ClInclude Include="..\src\optixHello\RayTraceRenderContext.h" />
+    <ClInclude Include="..\src\optixHello\TrackballCamera.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

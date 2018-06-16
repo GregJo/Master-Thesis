@@ -156,6 +156,8 @@ Right now i can think of two solutions:
 #include <stdint.h>
 #include <iomanip>
 
+#include "TrackballCamera.h"
+
 using namespace optix;
 
 const char* const SAMPLE_NAME = "optixHello";
@@ -180,11 +182,7 @@ Program        pgram_intersection = 0;
 Program        pgram_bounding_box = 0;
 
 // Camera state
-float3         camera_up;
-float3         camera_lookat;
-float3         camera_eye;
-Matrix4x4      camera_rotate;
-bool           camera_changed = true;
+TrackballCamera* camera;
 sutil::Arcball arcball;
 
 // Mouse state
@@ -194,6 +192,13 @@ int            mouse_button;
 // Postprocessing
 bool usePostProcessing = false;
 CommandList commandListAdaptive;
+
+// Variance based adaptive sampling specific
+const uint varianceWindowSize = 30;
+const uint maxAdditionalRaysTotal = 50;
+const uint maxAdditionalRaysPerRenderRun = 5;
+float* perWindowVariance = nullptr;
+int* perPerRayBudget = nullptr;
 
 //------------------------------------------------------------------------------
 //
@@ -207,8 +212,6 @@ void destroyContext();
 void registerExitHandler();
 void createContext();
 void loadGeometry();
-void setupCamera();
-void updateCamera();
 void glutInitialize(int* argc, char** argv);
 void glutRun();
 
@@ -218,6 +221,8 @@ void glutMousePress(int button, int state, int x, int y);
 void glutMouseMotion(int x, int y);
 void glutResize(int w, int h);
 
+void setupVarianceBuffer();
+void setupPerRayBudgetBuffer();
 
 //------------------------------------------------------------------------------
 //
@@ -233,6 +238,16 @@ Buffer getOutputBuffer()
 Buffer getPostProcessOutputBuffer()
 {
 	return context["post_process_output_buffer"]->getBuffer();
+}
+
+Buffer getPerWindowVarianceBuffer() 
+{
+	return context["per_window_variance_buffer_input"]->getBuffer();
+}
+
+Buffer getPerRayBudgetBuffer()
+{
+	return context["additional_rays_buffer_input"]->getBuffer();
 }
 
 void destroyContext()
@@ -322,6 +337,11 @@ void createContext()
 
 	context->declareVariable("input_buffer")->set(getOutputBuffer());
 
+	// Post processing
+
+	setupPerRayBudgetBuffer();
+	setupVarianceBuffer();
+
 	// Output buffer of adaptive post processing 
 	Buffer post_process_out_buffer = sutil::createOutputBuffer(context, RT_FORMAT_FLOAT4, width, height, use_pbo);
 	context["post_process_output_buffer"]->set(post_process_out_buffer);
@@ -332,6 +352,16 @@ void createContext()
 	context["sqrt_num_samples"]->setUint(sqrt_num_samples);
 	context["bad_color"]->setFloat(1000000.0f, 0.0f, 1000000.0f); // Super magenta to make sure it doesn't get averaged out in the progressive rendering.
 	context["bg_color"]->setFloat(make_float3(0.0f));
+
+	// Adaptive variables
+	context["window_size"]->setUint(varianceWindowSize);
+	context["max_ray_budget_total"]->setUint(maxAdditionalRaysTotal);
+	context["max_per_launch_idx_ray_budget"]->setUint(maxAdditionalRaysPerRenderRun);
+
+	context->declareVariable("per_window_variance_buffer_output")->set(getPerWindowVarianceBuffer());
+	context->declareVariable("additional_rays_buffer_output")->set(getPerRayBudgetBuffer());
+
+	context["camera_changed"]->setInt(0);
 }
 
 
@@ -545,35 +575,60 @@ void loadComplexGeometry()
 // Post Processing begin
 //
 
-void setupAdditionalRaysBuffer()
+void setupVarianceBuffer() 
 {
-	unsigned char maxPerLaunchIdxRayBudget = static_cast<unsigned char>(2u);
-	unsigned char* perLaunchIdxRayBudgets = new unsigned char[width * height * 4];
+	if (perWindowVariance == nullptr)
+	{
+		perWindowVariance = new float[width % varianceWindowSize * height % varianceWindowSize * 4];
+
+		for (unsigned int i = 0; i < width % varianceWindowSize * height % varianceWindowSize; i++)
+		{
+			perWindowVariance[i * 4] = -1.0f;
+			perWindowVariance[i * 4 + 1] = -1.0f;
+			perWindowVariance[i * 4 + 2] = -1.0f;
+			perWindowVariance[i * 4 + 3] = -1.0f;
+		}
+	}
+
+	Buffer per_window_variance_buffer_input = sutil::createInputOutputBuffer(context, RT_FORMAT_FLOAT4, width, height, false);
+	memcpy(per_window_variance_buffer_input->map(), perWindowVariance, sizeof(unsigned char) * width % varianceWindowSize * height % varianceWindowSize * 4);
+	per_window_variance_buffer_input->unmap();
+	context["per_window_variance_buffer_input"]->set(per_window_variance_buffer_input);
+
+	delete[] perWindowVariance;
+}
+
+void setupPerRayBudgetBuffer()
+{
+	perPerRayBudget = new int[width * height * 4];
 
 	// initialize additional rays buffer
 	for (unsigned int i = 0; i < width * height; i++)
 	{
-		perLaunchIdxRayBudgets[i * 4] = static_cast<unsigned char>(static_cast<unsigned int>(maxPerLaunchIdxRayBudget) + 1u);
-		perLaunchIdxRayBudgets[i * 4 + 1] = static_cast<unsigned char>(static_cast<unsigned int>(maxPerLaunchIdxRayBudget) + 1u);
-		perLaunchIdxRayBudgets[i * 4 + 2] = static_cast<unsigned char>(static_cast<unsigned int>(maxPerLaunchIdxRayBudget) + 1u);
-		perLaunchIdxRayBudgets[i * 4 + 3] = static_cast<unsigned char>(static_cast<unsigned int>(maxPerLaunchIdxRayBudget) + 1u);
+		perPerRayBudget[i * 4] = static_cast<unsigned int>(maxAdditionalRaysTotal);
+		perPerRayBudget[i * 4 + 1] = static_cast<unsigned int>(maxAdditionalRaysTotal);
+		perPerRayBudget[i * 4 + 2] = static_cast<unsigned int>(maxAdditionalRaysTotal);
+		perPerRayBudget[i * 4 + 3] = static_cast<unsigned int>(maxAdditionalRaysTotal);
 	}
 
 	// Additional rays test buffer setup
-	Buffer additional_rays_buffer = sutil::createInputOutputBuffer(context, RT_FORMAT_UNSIGNED_BYTE4, width, height, false);	
-	memcpy(additional_rays_buffer->map(), perLaunchIdxRayBudgets, sizeof(unsigned char) * width * height * 4);
+	Buffer additional_rays_buffer = sutil::createInputOutputBuffer(context, RT_FORMAT_UNSIGNED_INT4, width, height, false);	
+	memcpy(additional_rays_buffer->map(), perPerRayBudget, sizeof(int) * width * height * 4);
 	additional_rays_buffer->unmap();
-	context["additional_rays_buffer"]->set(additional_rays_buffer);
+	context["additional_rays_buffer_input"]->set(additional_rays_buffer);
 
-	delete[] perLaunchIdxRayBudgets;
+	delete[] perPerRayBudget;
 }
 
 void setupPostprocessing()
 {
 	commandListAdaptive = context->createCommandList();
 
+	//context["additional_rays_buffer"]->set(additional_rays_buffer);
+
+	//setupVarianceBuffer();
 	// Input buffer for post processing
-	//setupAdditionalRaysBuffer();
+	//setupPerRayBudgetBuffer();
 
 	commandListAdaptive->appendLaunch(1, width, height);
 	commandListAdaptive->finalize();
@@ -583,57 +638,6 @@ void setupPostprocessing()
 //
 // Post Processing end
 //
-
-void setupCamera()
-{
-	camera_eye = make_float3(-500.0f, 1250.0f, 0.0f);
-	camera_lookat = make_float3(0.0f, 0.0f, 0.0f);
-	camera_up = make_float3(0.0f, 1.0f, 0.0f);
-
-	camera_rotate = Matrix4x4::identity();
-}
-
-
-void updateCamera()
-{
-	const float fov = 35.0f;
-	const float aspect_ratio = static_cast<float>(width) / static_cast<float>(height);
-
-	float3 camera_u, camera_v, camera_w;
-	sutil::calculateCameraVariables(
-		camera_eye, camera_lookat, camera_up, fov, aspect_ratio,
-		camera_u, camera_v, camera_w, /*fov_is_vertical*/ true);
-
-	const Matrix4x4 frame = Matrix4x4::fromBasis(
-		normalize(camera_u),
-		normalize(camera_v),
-		normalize(-camera_w),
-		camera_lookat);
-	const Matrix4x4 frame_inv = frame.inverse();
-	// Apply camera rotation twice to match old SDK behavior
-	const Matrix4x4 trans = frame*camera_rotate*camera_rotate*frame_inv;
-
-	camera_eye = make_float3(trans*make_float4(camera_eye, 1.0f));
-	camera_lookat = make_float3(trans*make_float4(camera_lookat, 1.0f));
-	camera_up = make_float3(trans*make_float4(camera_up, 0.0f));
-
-	sutil::calculateCameraVariables(
-		camera_eye, camera_lookat, camera_up, fov, aspect_ratio,
-		camera_u, camera_v, camera_w, true);
-
-	camera_rotate = Matrix4x4::identity();
-
-	if (camera_changed) // reset accumulation
-		frame_number = 1;
-	camera_changed = false;
-
-	context["frame_number"]->setUint(frame_number++);
-	context["eye"]->setFloat(camera_eye);
-	context["U"]->setFloat(camera_u);
-	context["V"]->setFloat(camera_v);
-	context["W"]->setFloat(camera_w);
-
-}
 
 
 void glutInitialize(int* argc, char** argv)
@@ -684,11 +688,14 @@ void glutRun()
 
 void glutDisplay()
 {
-	updateCamera();
+	//updateCamera();
+	camera->update(frame_number);
 	context->launch(0, width, height);
+	camera->setChanged(false);
 
 	if (usePostProcessing)
 	{
+		//setupVarianceBuffer();
 		commandListAdaptive->execute();
 		sutil::displayBufferGL(getPostProcessOutputBuffer());
 	}
@@ -742,7 +749,6 @@ void glutMousePress(int button, int state, int x, int y)
 	}
 }
 
-
 void glutMouseMotion(int x, int y)
 {
 	if (mouse_button == GLUT_RIGHT_BUTTON)
@@ -753,8 +759,8 @@ void glutMouseMotion(int x, int y)
 			static_cast<float>(height);
 		const float dmax = fabsf(dx) > fabs(dy) ? dx : dy;
 		const float scale = std::min<float>(dmax, 0.9f);
-		camera_eye = camera_eye + (camera_lookat - camera_eye)*scale;
-		camera_changed = true;
+		camera->setEye(camera->getEye() + (camera->getLookat() - camera->getEye()) * scale);
+		camera->setChanged(true);
 	}
 	else if (mouse_button == GLUT_LEFT_BUTTON)
 	{
@@ -766,19 +772,18 @@ void glutMouseMotion(int x, int y)
 		const float2 a = { from.x / width, from.y / height };
 		const float2 b = { to.x / width, to.y / height };
 
-		camera_rotate = arcball.rotate(b, a);
-		camera_changed = true;
+		camera->setRotation(arcball.rotate(b, a));
+		camera->setChanged(true);
 	}
 
 	mouse_prev_pos = make_int2(x, y);
 }
 
-
 void glutResize(int w, int h)
 {
 	if (w == (int)width && h == (int)height) return;
 
-	camera_changed = true;
+	camera->setChanged(true);
 
 	width = w;
 	height = h;
@@ -859,7 +864,11 @@ int main(int argc, char* argv[])
 #endif
 
 		createContext();
-		setupCamera();
+
+		camera = new TrackballCamera(context, (int)width, (int)height);
+		camera->setup(make_float3(-500.0f, 1250.0f, 0.0f), make_float3(0.0f, 0.0f, 0.0f), make_float3(0.0f, 1.0f, 0.0f), 35.0f, true);
+
+		//setupCamera();
 		loadComplexGeometry();
 
 		// Adaptive post processing setup
@@ -873,7 +882,6 @@ int main(int argc, char* argv[])
 		}
 		else
 		{
-			updateCamera();
 			context->launch(0, width, height);
 			// Adaptive test execute if active
 			if (usePostProcessing)
