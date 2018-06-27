@@ -130,6 +130,26 @@ Right now i can think of two solutions:
 	   than the additional pass, but not sure, due to highly parallel nature of GPU.
 */
 
+/*
+At the moment i implemented the very basic hoelder regularity computation of the alpha on a tile, of which i implemented the smooth regime as well as the non-smooth regime.
+The computations are given by the paper and for the gradient, which is required by the smooth regime i used finite differences.
+Right now all seems to work as intended except the values do not make any sense because of the logarithms involved the computed alpha often turns out to be negative, which should
+not be the case as far as i understand. Another problem involving the logarithms is that log|x_center - x_neighbor|(value), which has to be computed as follows, again as i understand it:
+log(value) / log(x_center - x_neighbor), which in turn might result in the denominator being zero if log(1).
+The biggest uncertainty regarding applying the hoelder regularity computations of the alpha is that i am not sure which routine gets applied where and by which rules.
+My current thought is to apply the non-smooth routine and if the alpha results being > 1.0 then apply the smooth routine to recompute it.
+
+I considered the thought that i will have geometry information available, meaning knowing when one object ends and another begins in the current view/screen, which would be the areas
+i would apply the non-smooth regime at and the smooth regime otherwise. 
+Maybe the point of knowing the scene but still wanting to compute the regularity is to compute the alpha, which then tells you how many samples are needed.
+
+Also the calculation of the samples needed looks to me rediculously huge as described by the paper: 
+64 * 64 (64 * 64 wavelet basis functions at level 6 of the wavelet (binary) tree) * hoelder_alpha (probaly between 0.0 and 2.0) * 1.25 (oversampling factor) .
+
+I currenly lack understanding of:
+	- how the wavelets are exactly used for reconstruction
+*/
+
 #ifdef __APPLE__
 #  include <GLUT/glut.h>
 #else
@@ -194,9 +214,9 @@ bool usePostProcessing = false;
 CommandList commandListAdaptive;
 
 // Variance based adaptive sampling specific
-const uint varianceWindowSize = 30;
-const uint maxAdditionalRaysTotal = 50;
-const uint maxAdditionalRaysPerRenderRun = 5;
+const uint varianceWindowSize = 10;
+const uint maxAdditionalRaysTotal = 100;
+const uint maxAdditionalRaysPerRenderRun = 3;
 float* perWindowVariance = nullptr;
 int* perPerRayBudget = nullptr;
 
@@ -506,12 +526,13 @@ void loadGeometry()
 void loadComplexGeometry()
 {
 	// set up material
-	Material diffuse = context->createMaterial();
+	//Material diffuse = context->createMaterial();
 	const char *ptx = sutil::getPtxString(SAMPLE_NAME, "optixPathTracer.cu");
 	Program diffuse_ch = context->createProgramFromPTXString(ptx, "diffuseTextured");
 	Program diffuse_ah = context->createProgramFromPTXString(ptx, "shadow");
-	diffuse->setClosestHitProgram(0, diffuse_ch);
-	diffuse->setAnyHitProgram(1, diffuse_ah);
+	Program diffuse_ah_radiance = context->createProgramFromPTXString(ptx, "any_hit_radiance");
+	//diffuse->setClosestHitProgram(0, diffuse_ch);
+	//diffuse->setAnyHitProgram(1, diffuse_ah);
 
 	Material diffuse_light = context->createMaterial();
 	Program diffuse_em = context->createProgramFromPTXString(ptx, "diffuseEmitter");
@@ -525,6 +546,9 @@ void loadComplexGeometry()
 
 	mesh.closest_hit = diffuse_ch;
 	mesh.any_hit = diffuse_ah;
+
+	mesh.has_any_hit_radiance = true;
+	mesh.any_hit_radiance = diffuse_ah_radiance;
 
 	mesh.context = context;
 	const std::string filename = "../bin/Data/sponza/sponza.obj";

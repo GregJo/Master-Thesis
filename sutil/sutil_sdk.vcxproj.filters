@@ -95,15 +95,15 @@
     <CustomBuild Include="C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\sutil\CMakeLists.txt" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\cuda\phong.cu" />
-    <None Include="C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\cuda\triangle_mesh.cu" />
-  </ItemGroup>
-  <ItemGroup>
     <Filter Include="Source Files">
       <UniqueIdentifier>{D36DC7E8-0C8D-3765-9778-392CD6CDA187}</UniqueIdentifier>
     </Filter>
     <Filter Include="Header Files">
       <UniqueIdentifier>{BE5DEA17-B449-372D-ACE0-B2320B82D770}</UniqueIdentifier>
     </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="..\src\cuda\phong.cu" />
+    <None Include="..\src\cuda\triangle_mesh.cu" />
   </ItemGroup>
 </Project>

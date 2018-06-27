@@ -391,9 +391,7 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
     <ClInclude Include="..\src\sutil\Mesh.h" />
     <ClInclude Include="..\src\sutil\OptiXMesh.h" />
     <ClInclude Include="..\src\sutil\PNGLoader.h" />
-    <None Include="C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\cuda\phong.cu" />
     <ClInclude Include="..\src\sutil\PPMLoader.h" />
-    <None Include="C:\ProgramData\NVIDIA Corporation\OptiX SDK 5.0.1\SDK\cuda\triangle_mesh.cu" />
     <ClCompile Include="..\src\sutil\Arcball.cpp" />
     <ClCompile Include="..\src\sutil\glew.c" />
     <ClCompile Include="..\src\sutil\HDRLoader.cpp" />
@@ -413,6 +411,10 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
       <Project>{BB3D2BF4-6136-340E-989B-9C70DA1DC56C}</Project>
       <Name>ZERO_CHECK</Name>
     </ProjectReference>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="..\src\cuda\phong.cu" />
+    <None Include="..\src\cuda\triangle_mesh.cu" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

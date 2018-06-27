@@ -13,7 +13,8 @@ PNGLoader::PNGLoader(const std::string& filename, const LodePNGColorType PNGcolo
 	if (filename.empty()) return;
 	size_t suffix_pos = filename.find_last_of(".");
 	std::string filename_suffix = filename.substr(suffix_pos + 1);
-	std::cout << "Filename suffix: " << filename_suffix << std::endl;
+	std::cout << "Filename: " << filename << std::endl;
+	//std::cout << "Filename suffix: " << filename_suffix << std::endl;
 	if (filename_suffix != "png") return;
 
 	std::vector<unsigned char> out;
@@ -23,16 +24,16 @@ PNGLoader::PNGLoader(const std::string& filename, const LodePNGColorType PNGcolo
 	lodepng::State state; //optionally customize this one
 
 	unsigned error = lodepng::decode(out, m_nx, m_ny, state, raw_data);
-	std::cout << "Size of out vector: " << out.size() << std::endl;
+	//std::cout << "Size of out vector: " << out.size() << std::endl;
 
 	unsigned int m_nx2 = 0, m_ny2 = 0;
 	std::vector<unsigned char> out2;
 	unsigned error2 = lodepng::decode(out2, m_nx2, m_ny2, filename, LodePNGColorType::LCT_RGB);
-	std::cout << "Size of correct out vector: " << out.size() << std::endl << std::endl;
+	//std::cout << "Size of correct out vector: " << out.size() << std::endl << std::endl;
 
 	// Print first 3 color values (9 floats all in all)
-	printf("First 3 colors of out vector:  [%u,%u,%u] | [%u,%u,%u] | [%u,%u,%u]\n", out[0], out[1], out[2], out[3], out[4], out[5], out[6], out[7], out[8]);
-	printf("First 3 colors of out2 vector: [%u,%u,%u] | [%u,%u,%u] | [%u,%u,%u]\n\n", out2[0], out2[1], out2[2], out2[3], out2[4], out2[5], out2[6], out2[7], out2[8]);
+	//printf("First 3 colors of out vector:  [%u,%u,%u] | [%u,%u,%u] | [%u,%u,%u]\n", out[0], out[1], out[2], out[3], out[4], out[5], out[6], out[7], out[8]);
+	//printf("First 3 colors of out2 vector: [%u,%u,%u] | [%u,%u,%u] | [%u,%u,%u]\n\n", out2[0], out2[1], out2[2], out2[3], out2[4], out2[5], out2[6], out2[7], out2[8]);
 
 	if (!error)
 	{

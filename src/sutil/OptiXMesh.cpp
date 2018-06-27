@@ -134,6 +134,15 @@ optix::Material createOptiXMaterial(
   else
     mat[ "Kd_map"]->setTextureSampler( sutil::loadTexture( context, "", optix::make_float3(mat_params.Kd) ) );
 
+  if (!mat_params.D_map.empty())
+  {
+	  mat["D_map"]->setTextureSampler(sutil::loadTexture(context, mat_params.D_map, optix::make_float3(mat_params.Ka)));
+  }
+  else
+  {
+	  mat["D_map"]->setTextureSampler(sutil::loadTexture(context, "", optix::make_float3(mat_params.Ka)));
+  }
+
   mat[ "Kd_mapped" ]->setInt( use_textures  );
   mat[ "Kd"        ]->set3fv( mat_params.Kd );
   mat[ "Ks"        ]->set3fv( mat_params.Ks );
@@ -142,6 +151,44 @@ optix::Material createOptiXMaterial(
   mat[ "phong_exp" ]->setFloat( mat_params.exp );
 
   return mat;
+}
+
+optix::Material createOptiXMaterial(
+	optix::Context         context,
+	optix::Program         closest_hit,
+	optix::Program         any_hit_radiance,
+	optix::Program         any_hit_shadow,
+	const MaterialParams&  mat_params,
+	bool                   use_textures
+)
+{
+	optix::Material mat = context->createMaterial();
+	mat->setClosestHitProgram(0u, closest_hit);
+	mat->setAnyHitProgram(0u, any_hit_radiance);
+	mat->setAnyHitProgram(1u, any_hit_shadow);
+
+	if (use_textures)
+		mat["Kd_map"]->setTextureSampler(sutil::loadTexture(context, mat_params.Kd_map, optix::make_float3(mat_params.Kd)));
+	else
+		mat["Kd_map"]->setTextureSampler(sutil::loadTexture(context, "", optix::make_float3(mat_params.Kd)));
+
+	if (!mat_params.D_map.empty())
+	{
+		mat["D_map"]->setTextureSampler(sutil::loadTexture(context, mat_params.D_map, optix::make_float3(mat_params.Ka)));
+	}
+	else
+	{
+		mat["D_map"]->setTextureSampler(sutil::loadTexture(context, "", optix::make_float3(mat_params.Ka)));
+	}
+
+	mat["Kd_mapped"]->setInt(use_textures);
+	mat["Kd"]->set3fv(mat_params.Kd);
+	mat["Ks"]->set3fv(mat_params.Ks);
+	mat["Kr"]->set3fv(mat_params.Kr);
+	mat["Ka"]->set3fv(mat_params.Ka);
+	mat["phong_exp"]->setFloat(mat_params.exp);
+
+	return mat;
 }
 
 
@@ -185,15 +232,37 @@ void translateMeshToOptiX(
 
     optix::Program closest_hit = optix_mesh.closest_hit;
     optix::Program any_hit     = optix_mesh.any_hit;
+
+	optix::Program any_hit_radiance;
+	if (optix_mesh.has_any_hit_radiance)
+	{
+		any_hit_radiance = optix_mesh.any_hit_radiance;
+	}
+
     createMaterialPrograms( ctx, have_textures, closest_hit, any_hit );
 
-    for( int32_t i = 0; i < mesh.num_materials; ++i )
-      optix_materials.push_back( createOptiXMaterial(
-            ctx,
-            closest_hit,
-            any_hit,
-            mesh.mat_params[i],
-            have_textures ) );
+	for (int32_t i = 0; i < mesh.num_materials; ++i)
+	{
+		if (!optix_mesh.has_any_hit_radiance)
+		{
+			optix_materials.push_back(createOptiXMaterial(
+				ctx,
+				closest_hit,
+				any_hit,
+				mesh.mat_params[i],
+				have_textures));
+		}
+		else
+		{
+			optix_materials.push_back(createOptiXMaterial(
+				ctx,
+				closest_hit,
+				any_hit_radiance,
+				any_hit,
+				mesh.mat_params[i],
+				have_textures));
+		}
+	}
   }
 
   optix::Geometry geometry = ctx->createGeometry();  

@@ -59,6 +59,7 @@ struct OptiXMesh
   
   optix::Program               closest_hit;   // optional multi matl override
   optix::Program               any_hit;       // optional
+  optix::Program               any_hit_radiance;       // optional
 
   // Output
   optix::GeometryInstance      geom_instance;
@@ -66,6 +67,8 @@ struct OptiXMesh
   optix::float3                bbox_max;
 
   int                          num_triangles;
+
+  bool has_any_hit_radiance = false;
 };
 
 

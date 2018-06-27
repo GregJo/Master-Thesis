@@ -47,6 +47,7 @@ struct MaterialParams
   std::string         name;
 
   std::string         Kd_map;
+  std::string         D_map;		// Alpha Mask
   float               Kd[3];
   float               Ks[3];
   float               Kr[3];
