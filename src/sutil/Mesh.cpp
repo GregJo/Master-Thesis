@@ -563,16 +563,7 @@ void MeshLoader::Impl::loadMeshOBJ( Mesh& mesh )
 	mat_params.D_map = m_materials[i].alpha_texname.empty() ? "" :
 		directoryOfFilePath(m_filename) + m_materials[i].alpha_texname;
 
-	if (m_materials[i].specular_texname.empty())
-	{
-		printf("empty!!!\n");
-		printf("\nSpecular map: %s\n", m_materials[i].specular_texname.c_str());
-	}
-	if (m_materials[i].specular_highlight_texname.empty())
-	{
-		printf("empty!!!\n");
-		printf("Specular highlight map: %s\n\n", m_materials[i].specular_highlight_texname.c_str());
-	}
+	//printf("Diffuse map TEST: %s\n", m_materials[i].diffuse_texname.c_str());
 
     mat_params.Kd[0]  = m_materials[i].diffuse[0];
     mat_params.Kd[1]  = m_materials[i].diffuse[1];

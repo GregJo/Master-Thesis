@@ -143,11 +143,30 @@ I considered the thought that i will have geometry information available, meanin
 i would apply the non-smooth regime at and the smooth regime otherwise. 
 Maybe the point of knowing the scene but still wanting to compute the regularity is to compute the alpha, which then tells you how many samples are needed.
 
-Also the calculation of the samples needed looks to me rediculously huge as described by the paper: 
-64 * 64 (64 * 64 wavelet basis functions at level 6 of the wavelet (binary) tree) * hoelder_alpha (probaly between 0.0 and 2.0) * 1.25 (oversampling factor) .
+Q1: Also the calculation of the samples needed looks to me rediculously huge as described by the paper: 
+64 * 64 (64 * 64 wavelet basis functions at level 6 of the wavelet (binary) tree) * hoelder_alpha (probaly between 0.0 and 2.0) * 1.25 (oversampling factor).
 
 I currenly lack understanding of:
 	- how the wavelets are exactly used for reconstruction
+*/
+
+/*
+A1: My current task involves implementing the hoelder alpha routine on multiple levels. Per descended level i add an additional addaptivive sample to be processed 
+times the oversampling factor 1.25.
+
+Before that i must ensure that i use the geometry information avaible to compute the gradients necessary for the smooth regime hoelder alpha computation.
+
+Q1: Was i suggested to remove the fabric from the scene, like the hanging 'carpets' because they were very irregularly textured thus introducing another source for irregularity
+in the scene making the hoelder regularity undreliable?
+
+A1: Goal is simply a less complex scene.
+
+Q2: Would it be better to compute the gradients based on the samples before the image reconstruction, as in more correct? Otherwise it sounded like it was a more complex, 
+computationally expensive approach (correct me if i'm wrong here).
+
+It's important to compute [X] on every level with the updated information. (forgot, what [X] exactly was, but it's important).
+I believe it was regarding the finite differences, which will become more and more refined with each adaptive sample. 
+-> Update the depth map and use the most current depth information avaible to compute gradient via finite differences.
 */
 
 #ifdef __APPLE__
@@ -193,8 +212,6 @@ uint32_t       width = 512;
 uint32_t       height = 512;
 bool           use_pbo = true;
 
-//bool initial_render_run = true;
-
 int            frame_number = 1;
 int            sqrt_num_samples = 1;
 int            rr_begin_depth = 1;
@@ -214,8 +231,8 @@ bool usePostProcessing = false;
 CommandList commandListAdaptive;
 
 // Variance based adaptive sampling specific
-const uint varianceWindowSize = 10;
-const uint maxAdditionalRaysTotal = 100;
+const uint windowSize = 32;
+const uint maxAdditionalRaysTotal = 50;
 const uint maxAdditionalRaysPerRenderRun = 3;
 float* perWindowVariance = nullptr;
 int* perPerRayBudget = nullptr;
@@ -268,6 +285,27 @@ Buffer getPerWindowVarianceBuffer()
 Buffer getPerRayBudgetBuffer()
 {
 	return context["additional_rays_buffer_input"]->getBuffer();
+}
+
+Buffer getPostProcessInputDepthBuffer()
+{
+	return context["input_scene_depth_buffer"]->getBuffer();
+}
+
+Buffer getOutputDepthBuffer() 
+{
+	return context["output_scene_depth_buffer"]->getBuffer();
+}
+
+// Debug
+Buffer getDepthGradientBuffer()
+{
+	return context["depth_gradient_buffer"]->getBuffer();
+}
+
+Buffer getHoelderAlphaBuffer()
+{
+	return context["hoelder_alpha_buffer"]->getBuffer();
 }
 
 void destroyContext()
@@ -359,14 +397,23 @@ void createContext()
 
 	// Post processing
 
+	Buffer output_scene_depth_buffer = sutil::createOutputBuffer(context, RT_FORMAT_FLOAT4, width, height, use_pbo);
+	context["output_scene_depth_buffer"]->set(output_scene_depth_buffer);
+
+	// This buffer is for debug
+	Buffer depth_gradient_buffer = sutil::createOutputBuffer(context, RT_FORMAT_FLOAT4, width, height, use_pbo);
+	context["depth_gradient_buffer"]->set(depth_gradient_buffer);
+
 	setupPerRayBudgetBuffer();
 	setupVarianceBuffer();
 
+	// Adaptive source file
+	const char *adaptive_ptx = sutil::getPtxString(SAMPLE_NAME, "adaptive.cu");
 	// Output buffer of adaptive post processing 
 	Buffer post_process_out_buffer = sutil::createOutputBuffer(context, RT_FORMAT_FLOAT4, width, height, use_pbo);
 	context["post_process_output_buffer"]->set(post_process_out_buffer);
 
-	Program adaptive_ray_gen_program = context->createProgramFromPTXString(ptx, "pathtrace_camera_adaptive");
+	Program adaptive_ray_gen_program = context->createProgramFromPTXString(adaptive_ptx, "pathtrace_camera_adaptive");
 	context->setRayGenerationProgram(1, adaptive_ray_gen_program);		
 
 	context["sqrt_num_samples"]->setUint(sqrt_num_samples);
@@ -374,16 +421,19 @@ void createContext()
 	context["bg_color"]->setFloat(make_float3(0.0f));
 
 	// Adaptive variables
-	context["window_size"]->setUint(varianceWindowSize);
+	context["window_size"]->setUint(windowSize);
 	context["max_ray_budget_total"]->setUint(maxAdditionalRaysTotal);
 	context["max_per_launch_idx_ray_budget"]->setUint(maxAdditionalRaysPerRenderRun);
 
 	context->declareVariable("per_window_variance_buffer_output")->set(getPerWindowVarianceBuffer());
 	context->declareVariable("additional_rays_buffer_output")->set(getPerRayBudgetBuffer());
+	context->declareVariable("input_scene_depth_buffer")->set(getOutputDepthBuffer());
+	
+	context->declareVariable("post_process_input_buffer")->set(getPostProcessOutputBuffer());
+	context->declareVariable("post_process_input_scene_depth_buffer")->set(getPostProcessInputDepthBuffer());
 
-	context["camera_changed"]->setInt(0);
+	context["camera_changed"]->setInt(1);
 }
-
 
 void loadGeometry()
 {
@@ -527,6 +577,7 @@ void loadComplexGeometry()
 {
 	// set up material
 	//Material diffuse = context->createMaterial();
+	//const char *adaptive_ptx = sutil::getPtxString(SAMPLE_NAME, "adaptive.cu");
 	const char *ptx = sutil::getPtxString(SAMPLE_NAME, "optixPathTracer.cu");
 	Program diffuse_ch = context->createProgramFromPTXString(ptx, "diffuseTextured");
 	Program diffuse_ah = context->createProgramFromPTXString(ptx, "shadow");
@@ -555,6 +606,8 @@ void loadComplexGeometry()
 	loadMesh(filename, mesh);
 
 	model_aabb.set(mesh.bbox_min, mesh.bbox_max);
+
+	context["far_plane"]->setFloat(model_aabb.maxExtent());
 
 	GeometryGroup geometry_group = context->createGeometryGroup();
 	geometry_group->addChild(mesh.geom_instance);
@@ -603,9 +656,9 @@ void setupVarianceBuffer()
 {
 	if (perWindowVariance == nullptr)
 	{
-		perWindowVariance = new float[width % varianceWindowSize * height % varianceWindowSize * 4];
+		perWindowVariance = new float[width % windowSize * height % windowSize * 4];
 
-		for (unsigned int i = 0; i < width % varianceWindowSize * height % varianceWindowSize; i++)
+		for (unsigned int i = 0; i < width % windowSize * height % windowSize; i++)
 		{
 			perWindowVariance[i * 4] = -1.0f;
 			perWindowVariance[i * 4 + 1] = -1.0f;
@@ -615,7 +668,7 @@ void setupVarianceBuffer()
 	}
 
 	Buffer per_window_variance_buffer_input = sutil::createInputOutputBuffer(context, RT_FORMAT_FLOAT4, width, height, false);
-	memcpy(per_window_variance_buffer_input->map(), perWindowVariance, sizeof(unsigned char) * width % varianceWindowSize * height % varianceWindowSize * 4);
+	memcpy(per_window_variance_buffer_input->map(), perWindowVariance, sizeof(unsigned char) * width % windowSize * height % windowSize * 4);
 	per_window_variance_buffer_input->unmap();
 	context["per_window_variance_buffer_input"]->set(per_window_variance_buffer_input);
 
@@ -721,7 +774,9 @@ void glutDisplay()
 	{
 		//setupVarianceBuffer();
 		commandListAdaptive->execute();
-		sutil::displayBufferGL(getPostProcessOutputBuffer());
+		//sutil::displayBufferGL(getPostProcessOutputBuffer());
+		sutil::displayBufferGL(getOutputDepthBuffer());
+		//sutil::displayBufferGL(getDepthGradientBuffer());
 	}
 	else
 	{

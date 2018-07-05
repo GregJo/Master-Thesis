@@ -1,168 +1,644 @@
-#include <optix.h>
+/*
+* Copyright (c) 2017 NVIDIA CORPORATION. All rights reserved.
+*
+* Redistribution and use in source and binary forms, with or without
+* modification, are permitted provided that the following conditions
+* are met:
+*  * Redistributions of source code must retain the above copyright
+*    notice, this list of conditions and the following disclaimer.
+*  * Redistributions in binary form must reproduce the above copyright
+*    notice, this list of conditions and the following disclaimer in the
+*    documentation and/or other materials provided with the distribution.
+*  * Neither the name of NVIDIA CORPORATION nor the names of its
+*    contributors may be used to endorse or promote products derived
+*    from this software without specific prior written permission.
+*
+* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS ``AS IS'' AND ANY
+* EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+* IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+* PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+* CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+* EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+* PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+* PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+* OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+* (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+* OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+*/
+
 #include <optixu/optixu_math_namespace.h>
+#include "optixPathTracer.h"
+#include "random.h"
 
 using namespace optix;
 
-rtDeclareVariable(uint2, launch_index, rtLaunchIndex, );
-
-// per ray data struct
-struct PerRayData_radiance
+struct PerRayData_pathtrace
 {
-	float3 result;				// struct variable carrying our calculated output
-	float  importance;
+	float3 result;
+	float3 radiance;
+	float3 attenuation;
+	float3 origin;
+	float3 direction;
+	unsigned int seed;
 	int depth;
+	int countEmitted;
 	int done;
+	//int isAdaptive;
 };
 
-rtDeclareVariable(PerRayData_radiance,
-	prd_radiance,
-	rtPayload,							//This is a semantic name, not an API declared variable name to bind user data to
-	);
+struct PerRayData_pathtrace_shadow
+{
+	bool inShadow;
+};
 
-rtDeclareVariable(optix::Ray, ray, rtCurrentRay, );
-
-rtDeclareVariable(unsigned int, radiance_ray_type, , );
+// Scene wide variables
 rtDeclareVariable(float, scene_epsilon, , );
+rtDeclareVariable(float, far_plane, , );
 rtDeclareVariable(rtObject, top_object, , );
+rtDeclareVariable(uint2, launch_index, rtLaunchIndex, );
+
+rtDeclareVariable(PerRayData_pathtrace, current_prd, rtPayload, );
+
+
+
+//-----------------------------------------------------------------------------
+//
+//  Camera program -- main ray tracing loop
+//
+//-----------------------------------------------------------------------------
 
 rtDeclareVariable(float3, eye, , );
 rtDeclareVariable(float3, U, , );
 rtDeclareVariable(float3, V, , );
 rtDeclareVariable(float3, W, , );
-rtDeclareVariable(float3, bad_color, , );
-rtBuffer<uchar4, 2>   output_buffer;
+rtDeclareVariable(unsigned int, frame_number, , );
+rtDeclareVariable(unsigned int, sqrt_num_samples, , );
+rtDeclareVariable(unsigned int, rr_begin_depth, , );
+rtDeclareVariable(unsigned int, pathtrace_ray_type, , );
 
-static __device__ __inline__ uchar4 make_color(const float3& c)
-{
-	return make_uchar4(static_cast<unsigned char>(__saturatef(c.z)*255.99f),  /* B */
-		static_cast<unsigned char>(__saturatef(c.y)*255.99f),  /* G */
-		static_cast<unsigned char>(__saturatef(c.x)*255.99f),  /* R */
-		255u);                                                 /* A */
-};
+// Adaptive post processing variables and buffers
 
-static __device__ __inline__ float3 revert_color(const uchar4& c)
-{
-	return make_float3(static_cast<unsigned char>(__saturatef(c.z)*1.0f / 255.99f),  /* B */
-		static_cast<unsigned char>(__saturatef(c.y)*1.0f / 255.99f),  /* G */
-		static_cast<unsigned char>(__saturatef(c.x)*1.0f / 255.99f)  /* R */);                                                 /* A */
-};
+rtDeclareVariable(unsigned int, window_size, , );
+//rtDeclareVariable(unsigned int, max_ray_budget_total, , ) = static_cast<uint>(50u);
+rtDeclareVariable(unsigned int, max_per_launch_idx_ray_budget, , ) = static_cast<uint>(5u);		/* this variable will be written by the user */
+
+//
+// Adaptive version of pathtracing begin
+//
 
 /*--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
 /* Adaptive additional rays variables */
-rtDeclareVariable(uint, max_per_launch_idx_ray_budget, , ) = static_cast<uint>(5u);		/* this variable will be written by the user */
-rtBuffer<uchar4, 2>   additional_rays_buffer;											/* this buffer will be initialized by the host, but must also be modified by the graphics device */
+//rtDeclareVariable(unsigned int, max_per_launch_idx_ray_budget, , ) = static_cast<uint>(5u);		/* this variable will be written by the user */
+rtBuffer<int4, 2>   additional_rays_buffer_output;										/* this buffer will be initialized by the host, but must also be modified by the graphics device */
 
-rtBuffer<uchar4, 2>   input_buffer;														/* this buffer contains the initially rendered picture to be post processed */
-rtBuffer<uchar4, 2>   post_process_output_buffer;										/* this buffer contains the result, processed with additional adaptive rays */
+rtBuffer<float4, 2>	  per_window_variance_buffer_output;
 
-rtDeclareVariable(float, window_size, , );
+rtBuffer<float4, 2>   input_buffer;														/* this buffer contains the initially rendered picture to be post processed */
+rtBuffer<float4, 2>   input_scene_depth_buffer;											/* this buffer contains the necessary depth values to compute the gradient 
+																						via finite differences for the hoelder alpha computation via the smooth regime */
+rtBuffer<float4, 2>   post_process_output_buffer;										/* this buffer contains the result, processed with additional adaptive rays */
 
-static __device__ __inline__ float compute_window_variance(uint2 center, uint window_size)
+// For debug!
+rtBuffer<float4, 2>   depth_gradient_buffer;
+
+//
+// Hödler Adaptive Image Synthesis (begin)
+//
+
+// non-smooth regime
+static __device__ __inline__ float compute_window_hoelder_non_smooth_regime(uint2 center, uint window_size)
 {
-	float mean = 0.f;
-	float variance = 0.f;
+	size_t2 screen = input_buffer.size();
+
+	float alpha = 100.f;
+
 	uint squared_window_size = window_size * window_size;
-	uint2 upper_top_left_window = make_uint2(center.x - static_cast<uint>(static_cast<float>(window_size) / 2.f), center.y - static_cast<uint>(static_cast<float>(window_size) / 2.f));
+	uint half_window_size = (window_size / 2) + (window_size % 2);
+	uint2 top_left_window_corner = make_uint2(center.x - half_window_size, center.y - half_window_size);
+
+	//rtPrintf("\nTop left window corner: [ %d, %d ]\n", top_left_window_corner.x, top_left_window_corner.y);
+
+	float3 center_buffer_val = make_float3(input_buffer[center].x, input_buffer[center].y, input_buffer[center].z);
+	float centerColorMean = 1.f / 3.f * (center_buffer_val.x + center_buffer_val.y + center_buffer_val.z);
+	float neighborColorMean = 0.0f;
+
 	/* compute mean value */
 	for (uint i = 0; i < squared_window_size; i++)
 	{
-		uint2 idx = make_uint2(static_cast<uint>(i / window_size) + upper_top_left_window.x, static_cast<uint>(i % window_size) + upper_top_left_window.y);
-		float3 input_buffer_val = revert_color(input_buffer[idx]);
-		mean += 1.f/3.f * (input_buffer_val.x + input_buffer_val.y + input_buffer_val.z);
+		uint2 idx = make_uint2((i % window_size + top_left_window_corner.x) % screen.x, (i / window_size + top_left_window_corner.y) % screen.y);
+		if (idx.x == center.x && idx.y == center.y)
+		{
+			continue;
+		}
+		float3 neighbor_buffer_val = make_float3(input_buffer[idx].x, input_buffer[idx].y, input_buffer[idx].z);
+		neighborColorMean = 1.f / 3.f * (neighbor_buffer_val.x + neighbor_buffer_val.y + neighbor_buffer_val.z);
+
+		float neighbor_center_distance = length(make_float2(static_cast<float>(center.x) - static_cast<float>(idx.x), static_cast<float>(center.y) - static_cast<float>(idx.y)));
+
+		float log_base = log(fabs(neighbor_center_distance) + 1.0f);
+
+		if (log_base != 0.0f)
+		{
+			float log_x = log(fabs(1.0f / 2.0f /*hoelder constant, also try value 3*/ * (centerColorMean - neighborColorMean)) + 1.0f);
+			alpha = min(alpha, (log_x / log_base));
+			alpha = clamp(alpha, 0.0f, 100.f);
+		}
 	}
+	//rtPrintf("___________________________________________________________________________________________\n\n\n");
 
-	mean *= 1.f/ squared_window_size;
+	return alpha;
+};
 
-	/* compute variance */
+// modulo border treatment
+static __device__ __inline__ float3 compute_color_gradient(uint2 idx)
+{
+	size_t2 screen = input_scene_depth_buffer.size();
+
+	uint2 idx_up = make_uint2(idx.x, idx.y + 1 % screen.y);
+	uint2 idx_down = make_uint2(idx.x, min(0, idx.y - 1));//idx.y - 1 < 0 ? screen.y : idx.y - 1);
+
+	//uint2 idx_left = make_uint2(idx.x - 1 < 0 ? screen.x : idx.x - 1, idx.y);
+	uint2 idx_left = make_uint2(min(0, idx.x - 1), idx.y);
+	uint2 idx_right = make_uint2(idx.x + 1 % screen.x, idx.y);
+
+	float4 gradient_y = input_scene_depth_buffer[idx_up] - input_scene_depth_buffer[idx_down];
+	float4 gradient_x = input_scene_depth_buffer[idx_right] - input_scene_depth_buffer[idx_left];
+
+	float4 gradient_tmp = gradient_y + gradient_x;
+
+	float3 gradient = make_float3(gradient_tmp.x / 2.0f, gradient_tmp.y / 2.0f, gradient_tmp.z / 2.0f);
+
+	return gradient;
+};
+
+// modulo border treatment
+static __device__ __inline__ float3 compute_depth_gradient(uint2 idx)
+{
+	size_t2 screen = input_buffer.size();
+
+	uint2 idx_up = make_uint2(idx.x, idx.y + 1 % screen.y);
+	uint2 idx_down = make_uint2(idx.x, min(0, idx.y - 1));
+	uint2 idx_left = make_uint2(min(0, idx.x - 1), idx.y);
+	uint2 idx_right = make_uint2(idx.x + 1 % screen.x, idx.y);
+
+	float4 gradient_y = input_buffer[idx_up] - input_buffer[idx_down];
+	float4 gradient_x = input_buffer[idx_right] - input_buffer[idx_left];
+
+	float4 gradient_tmp = gradient_y + gradient_x;
+
+	float3 gradient = make_float3(gradient_tmp.x / 2.0f, gradient_tmp.y / 2.0f, gradient_tmp.z / 2.0f);
+
+	return gradient;
+};
+
+// modulo border treatment
+// first three values of float4 return are the color gradient
+// last value of float4 return is the depth/geometry gradient
+static __device__ __inline__ float4 compute_color_depth_gradient(uint2 idx)
+{
+	uint2 screen = make_uint2(input_buffer.size().x, input_buffer.size().y);
+
+	int up = min(idx.y + 1, screen.y);
+	int down = max(0, static_cast<int>(idx.y) - 1);
+	int left = max(0, static_cast<int>(idx.x) - 1);
+	int right = min(idx.x + 1, screen.x);
+/*
+	if (up > screen.y)
+	{
+		printf("Up is bigger than screen.y!: %d\n\n", up);
+	}
+	if (down < 0)
+	{
+		printf("Down is smaller than 0!: %d\n\n", down);
+	}
+	if (left < 0)
+	{
+		printf("Left is smaller than 0!: %d\n\n", left);
+	}
+	if (right > screen.x)
+	{
+		printf("Right is bigger than screen.x!: %d\n\n", right);
+	}*/
+
+	uint2 idx_up = make_uint2(idx.x, static_cast<uint>(up));
+	uint2 idx_down = make_uint2(idx.x, static_cast<uint>(down));
+	uint2 idx_left = make_uint2(static_cast<uint>(left), idx.y);
+	uint2 idx_right = make_uint2(static_cast<uint>(right), idx.y);
+
+	float4 gradient_color_y = input_buffer[idx_up] - input_buffer[idx_down];
+	float4 gradient_color_x = input_buffer[idx_right] - input_buffer[idx_left];
+
+	float4 gradient_color_tmp = gradient_color_y + gradient_color_x;
+
+	float3 gradient_color = make_float3(0.5f * gradient_color_tmp.x, 0.5f * gradient_color_tmp.y, 0.5f * gradient_color_tmp.z);
+
+	float gradient_depth_x = input_scene_depth_buffer[idx_up].x - input_scene_depth_buffer[idx_down].x;
+	float gradient_depth_y = input_scene_depth_buffer[idx_right].x - input_scene_depth_buffer[idx_left].x;
+
+	float gradient_depth = gradient_depth_x + gradient_depth_y;
+
+	float4 combined_gradient = make_float4(gradient_color.x, gradient_color.y, gradient_color.z, gradient_depth);
+
+	return combined_gradient;
+};
+
+static __device__ __inline__ float compute_window_hoelder_smooth_regime(uint2 center, uint window_size)
+{
+	size_t2 screen = input_buffer.size();
+
+	float alpha = 100.f;
+
+	uint squared_window_size = window_size * window_size;
+	uint half_window_size = (window_size / 2) + (window_size % 2);
+	uint2 top_left_window_corner = make_uint2(center.x - half_window_size, center.y - half_window_size);
+
+	float3 center_buffer_val = make_float3(input_buffer[center].x, input_buffer[center].y, input_buffer[center].z);
+	float centerColorMean = 1.f / 3.f * (center_buffer_val.x + center_buffer_val.y + center_buffer_val.z);
+	float neighborColorMean = 0.0f;
+
+	/* compute mean value */
 	for (uint i = 0; i < squared_window_size; i++)
 	{
-		uint2 idx = make_uint2(static_cast<uint>(i / window_size) + upper_top_left_window.x, static_cast<uint>(i % window_size) + upper_top_left_window.y);
-		float3 input_buffer_val = revert_color(input_buffer[idx]);
-		float var = 1.f / 3.f * (input_buffer_val.x + input_buffer_val.y + input_buffer_val.z);
-		variance += var;
+		uint2 idx = make_uint2((i % window_size + top_left_window_corner.x) % screen.x, (i / window_size + top_left_window_corner.y) % screen.y);
+		float3 neighbor_buffer_val = make_float3(input_buffer[idx].x, input_buffer[idx].y, input_buffer[idx].z);
+		neighborColorMean = 1.f / 3.f * (neighbor_buffer_val.x + neighbor_buffer_val.y + neighbor_buffer_val.z);
+
+		/*float gradient_of_mean_color = length(compute_color_gradient(idx));*/
+		float gradient_of_mean_color = length(compute_depth_gradient(idx));
+
+		float neighbor_center_distance = length(make_float2(static_cast<float>(center.x) - static_cast<float>(idx.x), static_cast<float>(center.y) - static_cast<float>(idx.y)));
+
+		float log_base = log(fabs(neighbor_center_distance) + 1.0f);
+
+		if (log_base != 0.0f)
+		{
+			float log_x = log(fabs(1.0f / 2.0f /*hoelder constant, also try value 3*/ * (centerColorMean - neighborColorMean - gradient_of_mean_color * neighbor_center_distance) + 1.0f));
+
+			alpha = min(alpha, log_x / log_base);
+
+			alpha = clamp(alpha, 0.0f, 100.f);
+		}
 	}
 
-	variance = 1.f / squared_window_size * (variance) - (mean * mean);
+	return alpha;
+};
+
+static __device__ __inline__ float compute_window_hoelder(uint2 center, uint window_size)
+{
+	size_t2 screen = input_buffer.size();
+
+	float alpha = 100.f;
+
+	uint squared_window_size = window_size * window_size;
+	uint half_window_size = (window_size / 2) + (window_size % 2);
+	uint2 top_left_window_corner = make_uint2(center.x - half_window_size, center.y - half_window_size);
+
+	float3 center_buffer_val = make_float3(input_buffer[center].x, input_buffer[center].y, input_buffer[center].z);
+	float centerColorMean = 1.f / 3.f * (center_buffer_val.x + center_buffer_val.y + center_buffer_val.z);
+	float neighborColorMean = 0.0f;
+
+	for (uint i = 0; i < squared_window_size; i++)
+	{
+		uint2 idx = make_uint2((i % window_size + top_left_window_corner.x) % screen.x, (i / window_size + top_left_window_corner.y) % screen.y);
+
+		float4 color_depth_gradient = compute_color_depth_gradient(idx);
+
+		// Debug!
+		depth_gradient_buffer[idx] = make_float4(color_depth_gradient.w);
+
+		float neighbor_center_distance = length(make_float2(static_cast<float>(center.x) - static_cast<float>(idx.x), static_cast<float>(center.y) - static_cast<float>(idx.y)));
+
+		float log_base = log(fabsf(neighbor_center_distance) + 1.0f);
+
+		if (i % window_size <= i / window_size)
+		{
+			post_process_output_buffer[idx] = make_float4(100.0f, 0.0f, 100.0f, 1.0f);
+		}
+
+		//if (log_base == 0.0f)
+		//{
+		//	rtPrintf("Neighbor center distance: || [ %f , %f ]-[ %f , %f ] || = %f \n\n", 
+		//		static_cast<float>(center.x), static_cast<float>(center.y), 
+		//		static_cast<float>(idx.x), static_cast<float>(idx.y), 
+		//		neighbor_center_distance);
+		//}
+
+		if (log_base != 0.0f)
+		{
+			float3 neighbor_buffer_val = make_float3(input_buffer[idx].x, input_buffer[idx].y, input_buffer[idx].z);
+			neighborColorMean = 1.f / 3.f * (neighbor_buffer_val.x + neighbor_buffer_val.y + neighbor_buffer_val.z);
+			//float log_x = log(fabs(1.0f / 2.0f /*hoelder constant, also try value 3*/ * (centerColorMean - neighborColorMean - gradient_of_mean_color * neighbor_center_distance) + 1.0f));
+			float log_x = 0.0f;
+
+			// Decide whether to use smooth or non-smooth regime based on depth/geometry buffer map. 
+			// Where there is a very small depth/geometry gradient use smooth regime computation hoelder alpha, 
+			// else use non-smooth regime hoelder alpha computation (log_x value makes for that distinction). 
+			if (fabsf(color_depth_gradient.w)/* Value 'w' is depth/geometry gradient */ <= 0.01f/* Currently arbitary threshhold for an edge! */)
+			{
+				//post_process_output_buffer[idx] = make_float4(100.0f, 0.0f, 100.0f, 1.0f);
+				//rtPrintf("\nsmooth!!!\n");
+				float3 color_gradient = make_float3(color_depth_gradient.x, color_depth_gradient.y, color_depth_gradient.z);
+				float mean_of_color_gradient = length(color_gradient);
+				log_x = log(fabsf(1.0f / 2.0f /*hoelder constant, also try value 3*/ * (centerColorMean - neighborColorMean - mean_of_color_gradient * neighbor_center_distance)) + 1.0f);
+			}
+			else
+			{
+				post_process_output_buffer[idx] = make_float4(100.0f, 0.0f, 100.0f, 1.0f);
+				//rtPrintf("\nnon-smooth!!!\n");
+				float log_x = log(fabsf(1.0f / 2.0f /*hoelder constant, also try value 3*/ * (centerColorMean - neighborColorMean)) + 1.0f);
+			}
+
+			//if (idx.x == 0)
+			//{
+			//	rtPrintf("Temporary alpha: %f\n\n", (log_x / log_base));
+			//}
+			//if (idx.x == 1 && idx.y == 1)
+			//{
+			//	rtPrintf("\n\n");
+			//}
+			
+
+			alpha = min(alpha, log_x / log_base);
+			alpha = clamp(alpha, 0.0f, 100.f);
+		}
+	}
+
+	return alpha;
+};
+
+static __device__ __inline__ void hoelder_refinement(uint2 center, uint window_size)
+{
+
+}
+
+static __device__ __inline__ uint compute_hoelder_samples_number(uint2 current_launch_index, float alpha, uint window_size)
+{
+	//rtPrintf("Hoelder alpha: %f\n\n", alpha);
+
+	float oversampling_factor = 1.25f;
+
+	uint samples_number = alpha * oversampling_factor * 1.0f;
+
+	if (additional_rays_buffer_output[current_launch_index].x > 0)
+	{
+		samples_number = static_cast<uint>(clamp(static_cast<float>(samples_number), 0.0f, static_cast<float>(max_per_launch_idx_ray_budget)));
+		additional_rays_buffer_output[current_launch_index] = make_int4(additional_rays_buffer_output[current_launch_index].x - static_cast<int>(samples_number));
+	}
+
+	return samples_number;
+};
+
+//
+// Hödler Adaptive Image Synthesis (end)
+//
+
+//
+// Variance Adaptive Image Synthesis (begin)
+//
+
+static __device__ __inline__ float compute_window_variance(uint2 center, uint window_size)
+{
+	uint2 screen = make_uint2(input_buffer.size().x, input_buffer.size().y);
+
+	float mean = 0.f;
+	float variance = 0.f;
+	//if (per_window_variance_buffer_output[center].x < 0.0f)
+	//{
+		uint squared_window_size = window_size * window_size;
+		uint half_window_size = (window_size / 2) + (window_size % 2);
+		uint2 top_left_window_corner = make_uint2(center.x - half_window_size, center.y - half_window_size);
+
+		//rtPrintf("Top left window corner: [ %d , %d ]\n\n", top_left_window_corner.x, top_left_window_corner.y);
+		//post_process_output_buffer[center] = make_float4(100.0f, 0.0f, 100.0f, 1.0f);
+
+		/* compute mean value */
+		for (uint i = 0; i < squared_window_size; i++)
+		{
+			uint2 idx = make_uint2((i % window_size + top_left_window_corner.x) % screen.x, (i / window_size + top_left_window_corner.y) % screen.y);
+			float3 input_buffer_val = make_float3(input_buffer[idx].x, input_buffer[idx].y, input_buffer[idx].z);
+			mean += 1.f / 3.f * (input_buffer_val.x + input_buffer_val.y + input_buffer_val.z);
+			//if (i % window_size <= i / window_size)
+			//{
+			//	post_process_output_buffer[idx] = make_float4(100.0f, 0.0f, 100.0f, 1.0f);
+			//}
+			//if (i % window_size == 0 && i / window_size == 0)
+			//{
+			//	//rtPrintf("Left lower corner, with window size: %d!!! \n\n", window_size);
+			//	//rtPrintf("Center: [ %d , %d ], Current global window index: [ %d , %d ] \n\n", center.x, center.y, idx.x, idx.y);
+			//	post_process_output_buffer[idx] = make_float4(100.0f, 0.0f, 100.0f, 1.0f);
+			//}
+			//if (i % window_size == window_size - 1 && i / window_size == 0)
+			//{
+			//	post_process_output_buffer[idx] = make_float4(100.0f, 0.0f, 100.0f, 1.0f);
+			//}
+			//if (i % window_size == 0 && i / window_size == window_size - 1)
+			//{
+			//	post_process_output_buffer[idx] = make_float4(100.0f, 0.0f, 100.0f, 1.0f);
+			//}
+			if (i % window_size == window_size - 1 && i / window_size == window_size - 1)
+			{
+				//post_process_output_buffer[idx] = make_float4(100.0f, 0.0f, 100.0f, 1.0f);
+				post_process_output_buffer[top_left_window_corner] = make_float4(100.0f, 0.0f, 0.0f, 1.0f);
+			}
+		}
+
+		/*mean *= 1.f/ squared_window_size;*/
+		mean = 1.f / squared_window_size * mean;
+
+		/* compute variance */
+		for (uint i = 0; i < squared_window_size; i++)
+		{
+			uint2 idx = make_uint2((i % window_size + top_left_window_corner.x) % screen.x, (i / window_size + top_left_window_corner.y) % screen.x);
+			float3 input_buffer_val = make_float3(input_buffer[idx].x, input_buffer[idx].y, input_buffer[idx].z);
+			float var = 1.f / 3.f * (input_buffer_val.x + input_buffer_val.y + input_buffer_val.z);
+			/*variance += var * var;*/
+			variance += (var * var - 2.0f * mean * var + mean * mean);
+		}
+
+		//variance = 1.f / squared_window_size * (variance) - (mean * mean);
+		variance = 1.f / squared_window_size * variance;
+
+		per_window_variance_buffer_output[center] = make_float4(variance);
+	//}
+	//else
+	//{
+	//	variance = per_window_variance_buffer_output[center].x;
+	//}
 
 	return variance;
 };
 
-static __device__ __inline__ uint compute_variance_based_additional_samples_number(uint window_size) 
+static __device__ __inline__ uint compute_samples_number(uint2 current_launch_index, float variance)
 {
-	uint additional_samples_number = 0;
-	/* check if box window is in buffer window */
-	/* actually compute 'additional_samples_number' */
-	return additional_samples_number;
+	uint samples_number = 0;
+
+	if (additional_rays_buffer_output[current_launch_index].x > 0)
+	{
+		samples_number = static_cast<uint>(clamp(static_cast<float>(variance * max_per_launch_idx_ray_budget), 0.0f, static_cast<float>(max_per_launch_idx_ray_budget)));
+		additional_rays_buffer_output[current_launch_index] = make_int4(additional_rays_buffer_output[current_launch_index].x - static_cast<int>(samples_number));
+	}
+
+	return samples_number;
 };
 
-RT_PROGRAM void adaptive_camera()
+//
+// Variance Adaptive Image Synthesis (end)
+//
+
+static __device__ __inline__ uint compute_current_samples_number(uint2 current_launch_index, uint window_size)
 {
-	/* Testing for additional adaptive rays. Added jittering for test purposes. */
-	
-	/* 
-		Postpone launching additional rays until first currently traced ray output is avaible (extend to neighborhood after success).
-			- 1. Postponing will be done with a loop, which will run indefinitely and does nothing (maybe use observer pattern here, more elegant than having a loop with an if statement), 
-				 until a condition is met, in this case when the output buffer has been written (-> no longer necessary, because the code advances after "rtTrace" only after its done).
-			  2. Upon reaching the written output buffer state which i will modify the additional "additional_rays_buffer" values, which are initialized with ("max_per_launch_idx_ray_budget" + 1)
-			     so that they contain an arbitary smaller or value (but only corresponding (neighboring) values to the current launchIdx).
-			  3. After setting the current additional(, adaptive) ray budget i break/leave the loop and start another, that launches another loop, in which i launch additional rays,
-			     according to the current budget and add/write the results into the output buffer.
-		Additional adaptive rays count will be avaible in the "additional_rays_buffer"
-	*/
-	size_t2 screen = post_process_output_buffer.size();
+	uint sample_number = 0;
 
-	float2 d = make_float2(launch_index) /
-		make_float2(screen) * 2.f - 1.f;
+	uint additional_samples_number = 0;
 
-	uint additional_rays_count = static_cast<uint>(additional_rays_buffer[launch_index].x);
+	size_t2 screen = input_buffer.size();
 
-	float3 ray_origin = eye;
-	float3 ray_direction = normalize(d.x*U + d.y*V + W);
+	uint times_width = screen.x / window_size;
+	uint times_height = screen.y / window_size;
 
-	/* Make the following 'adaptive pass' test to a real adaptive pass (for that i must ensure, that the first resulting image is completely avaible). */
-	//if (prd.done)
-	//{
-		additional_rays_count = static_cast<uint>(input_buffer[launch_index].x) % (max_per_launch_idx_ray_budget + 1u);
-		//rtPrintf("Launch index: %u, %u; Additional rays count: %u !\n\n", launch_index.x, launch_index.y, additional_rays_count);
-		float jitter = static_cast<float>(additional_rays_count) / static_cast<float>(max_per_launch_idx_ray_budget);
-		float jitterScale = 0.1f;
-		jitter = jitter * jitterScale;
+	uint horizontal_padding = static_cast<uint>(0.5f * (screen.x - (times_width * window_size)));
+	uint vertical_padding = static_cast<uint>(0.5f * (screen.y - (times_height * window_size)));
 
-		if (additional_rays_count <= 0)
+	uint half_window_size = (window_size / 2) + (window_size % 2);
+
+	uint2 times_launch_index = make_uint2(((current_launch_index.x / window_size) * window_size) % screen.x, ((current_launch_index.y / window_size) * window_size) % screen.y);
+
+	uint2 current_window_center = make_uint2(times_launch_index.x + horizontal_padding + half_window_size, times_launch_index.y + vertical_padding + half_window_size);
+
+	float variance = compute_window_variance(current_window_center, window_size);
+
+	//float hoelder_alpha = compute_window_hoelder(current_window_center, window_size);
+
+	sample_number = compute_samples_number(current_launch_index, (30.0f * variance));
+
+	//sample_number = compute_hoelder_samples_number(current_launch_index, (100.0f * hoelder_alpha), window_size);
+
+	//rtPrintf("Sample number: %d\n\n", sample_number);
+
+	return sample_number;
+};
+
+RT_PROGRAM void pathtrace_camera_adaptive()
+{
+	//rtPrintf("Current samples number: %d\n\n", additional_rays_buffer_output[launch_index].x);
+
+	// Debug!
+	depth_gradient_buffer[launch_index] = make_float4(0.0f);
+
+	size_t2 screen = input_buffer.size();
+
+	float2 inv_screen = 1.0f / make_float2(screen) * 2.f;
+	float2 pixel = (make_float2(launch_index)) * inv_screen - 1.f;
+
+	float2 jitter_scale = inv_screen / sqrt_num_samples;
+	unsigned int adaptive_samples_per_pixel = compute_current_samples_number(launch_index, window_size);
+	unsigned int current_samples_per_pixel = adaptive_samples_per_pixel;
+	float3 result = make_float3(0.0f);
+
+	unsigned int adaptive_sqrt_num_samples = sqrtf(static_cast<float>(adaptive_samples_per_pixel));
+
+	if (!adaptive_sqrt_num_samples)
+	{
+		++adaptive_sqrt_num_samples;
+	}
+
+	unsigned int seed = tea<16>(screen.x*launch_index.y + launch_index.x, frame_number);
+
+	float3 pixel_color = make_float3(input_buffer[launch_index]);
+
+	if (current_samples_per_pixel)
+	{
+		do
 		{
-			post_process_output_buffer[launch_index] = make_color(bad_color);
-		}
+			//
+			// Sample pixel using jittering
+			//
+			unsigned int x = adaptive_samples_per_pixel % adaptive_sqrt_num_samples;
+			unsigned int y = adaptive_samples_per_pixel / adaptive_sqrt_num_samples;
+			float2 jitter = make_float2(x - rnd(seed), y - rnd(seed));
+			float2 d = pixel + jitter*jitter_scale;
+			float3 ray_origin = eye;
+			float3 ray_direction = normalize(d.x*U + d.y*V + W);
 
-		while (additional_rays_count > 0u)
-		{
-			//rtPrintf("Additional rays left: %u !\n", additional_rays_count);
-			float3 jittered_ray_origin;
+			// Initialze per-ray data
+			PerRayData_pathtrace prd;
+			prd.result = make_float3(0.f);
+			prd.attenuation = make_float3(1.f);
+			prd.countEmitted = true;
+			prd.done = false;
+			prd.seed = seed;
+			prd.depth = 0;
+			//prd.isAdaptive = 1;
 
-			jittered_ray_origin.x = ray_origin.x + jitter;
-			jittered_ray_origin.y = ray_origin.y - jitter;
-			jittered_ray_origin.z = ray_origin.z + jitter;
+			// Each iteration is a segment of the ray path.  The closest hit will
+			// return new segments to be traced here.
+			for (;;)
+			{
+				//if (prd.depth == 1)
+				//{
+				//	float ray_length = fabsf(length((prd.origin - eye)));
+				//	float normalized_ray_length = ray_length / far_plane;//2500.0f;
 
-			float3 jittered_ray_direction;
+				//	float a = 1.0f / (float)frame_number;
+				//	float3 old_depth = make_float3(input_scene_depth_buffer[launch_index]);
+				//	input_scene_depth_buffer[launch_index] = make_float4(lerp(old_depth, make_float3(normalized_ray_length), a), 1.0f);
 
-			jittered_ray_direction.x = ray_direction.x + jitter;
-			jittered_ray_direction.y = ray_direction.y - jitter;
-			jittered_ray_direction.z = ray_direction.z + jitter;
+				//	//if (frame_number == 1)
+				//	//{
+				//	//	input_scene_depth_buffer[launch_index] = make_float4(normalized_ray_length);
+				//	//}
+				//}
 
-			Ray ray2(jittered_ray_origin, jittered_ray_direction, radiance_ray_type, scene_epsilon);
-			PerRayData_radiance prd2;
-			prd2.importance = 1.f;
-			prd2.depth = 0;
-			prd2.done = false;
+				Ray ray = make_Ray(ray_origin, ray_direction, pathtrace_ray_type, scene_epsilon, RT_DEFAULT_MAX);
+				rtTrace(top_object, ray, prd);
 
-			rtTrace(top_object, ray2, prd2);
+				if (prd.done)
+				{
+					// We have hit the background or a luminaire
+					prd.result += prd.radiance * prd.attenuation;
+					break;
+				}
 
-			/*post_process_output_buffer[launch_index] = make_color(revert_color(input_buffer[launch_index]) + prd2.result);*/
-			post_process_output_buffer[launch_index] = make_color(make_float3(1.0f));
-			additional_rays_count--;
+				// Russian roulette termination 
+				if (prd.depth >= rr_begin_depth)
+				{
+					float pcont = fmaxf(prd.attenuation);
+					if (rnd(prd.seed) >= pcont)
+						break;
+					prd.attenuation /= pcont;
+				}
 
-			jitter = static_cast<float>(additional_rays_count) / static_cast<float>(max_per_launch_idx_ray_budget);
-			jitterScale = jitterScale * -1.f;
-			jitter = jitter * jitterScale;
-		}
-	//}
+				prd.depth++;
+				prd.result += prd.radiance * prd.attenuation;
+
+				// Update ray data for the next path segment
+				ray_origin = prd.origin;
+				ray_direction = prd.direction;
+			}
+
+			result += prd.result;
+			seed = prd.seed;
+		} while (--current_samples_per_pixel);
+
+		pixel_color = result / (adaptive_sqrt_num_samples*adaptive_sqrt_num_samples);
+
+		// Pink coloring of tiles for debug
+		//if (adaptive_samples_per_pixel > 1)
+		//{
+		//	pixel_color = make_float3(100.0f, 0.0f, 100.0f);
+		//}
+	}
+	//
+	// Update the output buffer
+	//
+
+	float a = 1.0f / (float)frame_number;
+	float3 old_color = make_float3(input_buffer[launch_index]);
+	post_process_output_buffer[launch_index] = make_float4(lerp(old_color, pixel_color, a), 1.0f);
+
+	//compute_current_window_test(launch_index, 5);
 }
+
+//
+// Adaptive version of pathtracing end
+//
