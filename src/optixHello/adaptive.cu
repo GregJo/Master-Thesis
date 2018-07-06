@@ -94,11 +94,15 @@ rtBuffer<int4, 2>	  adaptive_samples_budget_buffer;									/* this buffer will 
 rtBuffer<int4, 2>	  hoelder_refinement_buffer;										/* this buffer contains the information, where refinement will take place according to
 																						hoelder regularity criterion, everywhere where refinement is needed value is 1, else zero */
 
+rtBuffer<int4, 2>	  window_size_buffer;
+
 rtBuffer<float4, 2>	  per_window_variance_buffer_output;
 
 rtBuffer<float4, 2>   input_buffer;														/* this buffer contains the initially rendered picture to be post processed */
 rtBuffer<float4, 2>   input_scene_depth_buffer;											/* this buffer contains the necessary depth values to compute the gradient 
 																						via finite differences for the hoelder alpha computation via the smooth regime */
+rtBuffer<float4, 2>   hoelder_adaptive_scene_depth_buffer;								/* this buffer contains only the depth values of the adaptive samples which has been evaluated 
+																						and is used for gradient computation */
 rtBuffer<float4, 2>   post_process_output_buffer;										/* this buffer contains the result, processed with additional adaptive rays */
 
 // For debug!
@@ -240,6 +244,9 @@ static __device__ __inline__ float4 compute_color_depth_gradient(uint2 idx)
 	float gradient_depth_x = input_scene_depth_buffer[idx_up].x - input_scene_depth_buffer[idx_down].x;
 	float gradient_depth_y = input_scene_depth_buffer[idx_right].x - input_scene_depth_buffer[idx_left].x;
 
+	//float gradient_depth_x = hoelder_adaptive_scene_depth_buffer[idx_up].x - hoelder_adaptive_scene_depth_buffer[idx_down].x;
+	//float gradient_depth_y = hoelder_adaptive_scene_depth_buffer[idx_right].x - hoelder_adaptive_scene_depth_buffer[idx_left].x;
+
 	float gradient_depth = gradient_depth_x + gradient_depth_y;
 
 	float4 combined_gradient = make_float4(gradient_color.x, gradient_color.y, gradient_color.z, gradient_depth);
@@ -315,10 +322,11 @@ static __device__ __inline__ float compute_window_hoelder(uint2 center, uint win
 
 		float log_base = log(fabsf(neighbor_center_distance) + 1.0f);
 
-		//if (i % window_size <= i / window_size)
-		//{
-		//	post_process_output_buffer[idx] = make_float4(100.0f, 0.0f, 100.0f, 1.0f);
-		//}
+		if (i % window_size <= i / window_size)
+		{
+			float inverseWindowSize = 1.0f / static_cast<float>(window_size);
+			post_process_output_buffer[idx] = make_float4(window_size * inverseWindowSize, 0.0f, window_size_buffer[idx].x * inverseWindowSize, 1.0f);
+		}
 
 		//if (log_base == 0.0f)
 		//{
@@ -416,47 +424,50 @@ static __device__ __inline__ uint compute_hoelder_samples_number(uint2 current_l
 
 static __device__ __inline__ uint hoelder_compute_current_samples_number_and_manage_buffers(uint2 current_launch_index, uint2 current_window_center, uint window_size)
 {
-	float hoelder_alpha = -1.0f;
-	float hoelder_alpha_no_refinement_threshhold = 0.5f;
-
-	//rtPrintf("Hoelder refinement buffer value: %d\n", hoelder_refinement_buffer[current_launch_index].x);
-	//if (adaptive_samples_budget_buffer[current_launch_index].x == 1)
-	//{
-	//	rtPrintf("Currently avaible adaptive samples: %d\n\n", adaptive_samples_budget_buffer[current_launch_index].x);
-	//}
-	/*rtPrintf("Currently avaible adaptive samples: %d\n\n", adaptive_samples_budget_buffer[current_launch_index].x);*/
-
-	if (hoelder_refinement_buffer[current_launch_index].x == 1)
+	if (window_size >= 2)
 	{
-		//rtPrintf("Compute!!!\n\n");
-		hoelder_alpha = compute_window_hoelder(current_window_center, window_size);
-		hoelder_refinement_buffer[current_launch_index] = make_int4(0);
+		float hoelder_alpha = -1.0f;
+		float hoelder_alpha_no_refinement_threshhold = 0.5f;
 
-		//printf("Current hoelder: %f\n\n", hoelder_alpha);
+		//rtPrintf("Hoelder refinement buffer value: %d\n", hoelder_refinement_buffer[current_launch_index].x);
+		//if (adaptive_samples_budget_buffer[current_launch_index].x == 1)
+		//{
+		//	rtPrintf("Currently avaible adaptive samples: %d\n\n", adaptive_samples_budget_buffer[current_launch_index].x);
+		//}
+		/*rtPrintf("Currently avaible adaptive samples: %d\n\n", adaptive_samples_budget_buffer[current_launch_index].x);*/
+
+		if (hoelder_refinement_buffer[current_launch_index].x == 1)
+		{
+			//rtPrintf("Compute!!!\n\n");
+			hoelder_alpha = compute_window_hoelder(current_window_center, window_size);
+			hoelder_refinement_buffer[current_launch_index] = make_int4(0);
+
+			//printf("Current hoelder: %f\n\n", hoelder_alpha);
+		}
+
+		if (hoelder_alpha < 0.0f)
+		{
+			//rtPrintf("Set to one hundred!!!\n\n");
+			hoelder_alpha = 100.0f;
+		}
+
+		if (hoelder_alpha < hoelder_alpha_no_refinement_threshhold)
+		{
+			//printf("Current hoelder: %f\n\n", hoelder_alpha);
+			//rtPrintf("Refine next frame!!!\n\n");
+			hoelder_refinement_buffer[current_launch_index] = make_int4(1);
+			adaptive_samples_budget_buffer[current_launch_index] += make_int4(1);// hoelder_refinement_buffer[current_launch_index];
+			window_size_buffer[current_launch_index] = make_int4(0.5f * window_size_buffer[current_launch_index].x);
+			//rtPrintf("Currently avaible adaptive samples: %d\n\n", adaptive_samples_budget_buffer[current_launch_index].x);
+		}
 	}
-
-	if (hoelder_alpha < 0.0f)
-	{
-		//rtPrintf("Set to one hundred!!!\n\n");
-		hoelder_alpha = 100.0f;
-	}
-
-	if (hoelder_alpha < hoelder_alpha_no_refinement_threshhold)
-	{
-		//printf("Current hoelder: %f\n\n", hoelder_alpha);
-		//rtPrintf("Refine next frame!!!\n\n");
-		hoelder_refinement_buffer[current_launch_index] = make_int4(1);
-		adaptive_samples_budget_buffer[current_launch_index] += make_int4(1);// hoelder_refinement_buffer[current_launch_index];
-		//rtPrintf("Currently avaible adaptive samples: %d\n\n", adaptive_samples_budget_buffer[current_launch_index].x);
-	}
-
 	//hoelder_alpha_buffer[current_launch_index] = make_float4(hoelder_alpha * 100.0f);
 
 	return compute_hoelder_samples_number(current_launch_index, window_size);
 	//return 0;
 };
 
-static __device__ __inline__ void initialize_hoelder_refinement_buffer(uint2 current_launch_index, int frame_number)
+static __device__ __inline__ void initialize_hoelder_refinement_buffer(uint2 current_launch_index, int frame_number, int camera_changed, uint window_size)
 {
 	if (frame_number == 1 || camera_changed == 1)
 	{
@@ -464,8 +475,23 @@ static __device__ __inline__ void initialize_hoelder_refinement_buffer(uint2 cur
 		hoelder_refinement_buffer[current_launch_index] = make_int4(1);
 		adaptive_samples_budget_buffer[current_launch_index] = make_int4(0);
 
+		window_size_buffer[current_launch_index] = make_int4(window_size);
 		//rtPrintf("Currently avaible adaptive samples: %d\n\n", adaptive_samples_budget_buffer[current_launch_index].x);
 	}
+};
+
+static __device__ __inline__ void initializeHoelderAdaptiveSceneDepthBuffer(uint2 current_launch_index, int frame_number, int camera_changed)
+{
+	if (frame_number == 1 || camera_changed == 1)
+	{
+		//rtPrintf("Init!!!\n\n");
+		hoelder_adaptive_scene_depth_buffer[current_launch_index] = input_scene_depth_buffer[current_launch_index];
+	}
+};
+
+static __device__ __inline__ void resetHoelderAdaptiveSceneDepthBuffer(uint2 current_launch_index)
+{
+	hoelder_adaptive_scene_depth_buffer[current_launch_index] = make_float4(0.0f);
 };
 
 //
@@ -569,7 +595,7 @@ static __device__ __inline__ uint compute_current_samples_number(uint2 current_l
 {
 	uint sample_number = 0;
 
-	uint additional_samples_number = 0;
+	//uint additional_samples_number = 0;
 
 	size_t2 screen = input_buffer.size();
 
@@ -618,9 +644,10 @@ RT_PROGRAM void pathtrace_camera_adaptive()
 
 	float2 jitter_scale = inv_screen / sqrt_num_samples;
 
-	initialize_hoelder_refinement_buffer(launch_index, frame_number);
+	initializeHoelderAdaptiveSceneDepthBuffer(launch_index, frame_number, camera_changed);
+	initialize_hoelder_refinement_buffer(launch_index, frame_number, camera_changed, static_cast<uint>(window_size));
 
-	unsigned int adaptive_samples_per_pixel = compute_current_samples_number(launch_index, window_size);
+	unsigned int adaptive_samples_per_pixel = compute_current_samples_number(launch_index, window_size_buffer[launch_index].x);
 	unsigned int current_samples_per_pixel = adaptive_samples_per_pixel;
 	float3 result = make_float3(0.0f);
 
@@ -634,6 +661,8 @@ RT_PROGRAM void pathtrace_camera_adaptive()
 	unsigned int seed = tea<16>(screen.x*launch_index.y + launch_index.x, frame_number);
 
 	float3 pixel_color = make_float3(input_buffer[launch_index]);
+
+	resetHoelderAdaptiveSceneDepthBuffer(launch_index);
 
 	if (current_samples_per_pixel)
 	{
@@ -672,11 +701,20 @@ RT_PROGRAM void pathtrace_camera_adaptive()
 					float3 old_depth = make_float3(input_scene_depth_buffer[launch_index]);
 					input_scene_depth_buffer[launch_index] = make_float4(lerp(old_depth, make_float3(normalized_ray_length), a), 1.0f);
 
+					hoelder_adaptive_scene_depth_buffer[launch_index] = make_float4(make_float3(normalized_ray_length), 1.0f);
 					//if (frame_number == 1)
 					//{
 					//	input_scene_depth_buffer[launch_index] = make_float4(normalized_ray_length);
 					//}
 				}
+
+				//if (prd.depth == 1)
+				//{
+				//	float ray_length = fabsf(length((prd.origin - eye)));
+				//	float normalized_ray_length = ray_length / far_plane;//2500.0f;
+
+				//	hoelder_adaptive_scene_depth_buffer[launch_index] = make_float4(make_float3(normalized_ray_length), 1.0f);
+				//}
 
 				Ray ray = make_Ray(ray_origin, ray_direction, pathtrace_ray_type, scene_epsilon, RT_DEFAULT_MAX);
 				rtTrace(top_object, ray, prd);
@@ -712,9 +750,9 @@ RT_PROGRAM void pathtrace_camera_adaptive()
 		pixel_color = result / (adaptive_sqrt_num_samples*adaptive_sqrt_num_samples);
 
 		// Pink coloring of tiles for debug
-		//if (adaptive_samples_per_pixel == 1)
+		//if (adaptive_samples_per_pixel == 1 && window_size_buffer[launch_index].x <= 4)
 		//{
-		//	pixel_color = make_float3(100.0f, 0.0f, 100.0f);
+		//	pixel_color = make_float3(window_size, 0.0f, window_size_buffer[launch_index].x);
 		//}
 	}
 	//

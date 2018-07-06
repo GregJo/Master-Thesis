@@ -262,7 +262,7 @@ const uint windowSize = 64;
 const uint maxAdditionalRaysTotal = 0;			// If using hoelder set this to zero 
 const uint maxAdditionalRaysPerRenderRun = 3;
 float* perWindowVariance = nullptr;
-int* perPerRayBudget = nullptr;
+//int* perPerRayBudget = nullptr;
 
 //------------------------------------------------------------------------------
 //
@@ -287,6 +287,7 @@ void glutResize(int w, int h);
 
 //void setupVarianceBuffer();
 void setupPerRayTotalBudgetBuffer();
+void setupPerRayWindowSizeBuffer();
 
 //------------------------------------------------------------------------------
 //
@@ -314,6 +315,11 @@ Buffer getPerRayBudgetBuffer()
 	return context["additional_rays_buffer_input"]->getBuffer();
 }
 
+Buffer getPerRayWindowSizeBuffer()
+{
+	return context["window_size_buffer"]->getBuffer();
+}
+
 Buffer getPostProcessInputDepthBuffer()
 {
 	return context["input_scene_depth_buffer"]->getBuffer();
@@ -334,6 +340,12 @@ Buffer getDepthGradientBuffer()
 Buffer getHoelderAlphaBuffer()
 {
 	return context["hoelder_alpha_buffer"]->getBuffer();
+}
+
+// Debug
+Buffer getHoelderAdaptiveSceneDepthBuffer() 
+{
+	return context["hoelder_adaptive_scene_depth_buffer"]->getBuffer();
 }
 
 void destroyContext()
@@ -446,6 +458,7 @@ void createContext()
 	context["hoelder_alpha_buffer"]->set(hoelder_alpha_buffer);
 
 	setupPerRayTotalBudgetBuffer();
+	setupPerRayWindowSizeBuffer();
 	//setupVarianceBuffer();
 
 	// Adaptive source file
@@ -454,12 +467,16 @@ void createContext()
 	createAndPassBufferFromTo("post_process_output_buffer", "post_process_input_buffer", RT_FORMAT_FLOAT4, width, height, use_pbo);
 
 	createAndPassBufferFromTo("per_window_variance_buffer_input", "per_window_variance_buffer_output", RT_FORMAT_FLOAT4, width, height, use_pbo);
+
 	context->declareVariable("adaptive_samples_budget_buffer")->set(getPerRayBudgetBuffer());
 
 	passBufferFromTo("input_scene_depth_buffer", "post_process_input_scene_depth_buffer");
 
 	Buffer hoelder_refinement_buffer = sutil::createOutputBuffer(context, RT_FORMAT_INT4, width, height, use_pbo);
 	context["hoelder_refinement_buffer"]->set(hoelder_refinement_buffer);
+
+	Buffer hoelder_adaptive_scene_depth_buffer = sutil::createOutputBuffer(context, RT_FORMAT_FLOAT4, width, height, use_pbo);
+	context["hoelder_adaptive_scene_depth_buffer"]->set(hoelder_adaptive_scene_depth_buffer);
 
 	Program adaptive_ray_gen_program = context->createProgramFromPTXString(adaptive_ptx, "pathtrace_camera_adaptive");
 	context->setRayGenerationProgram(1, adaptive_ray_gen_program);		
@@ -694,7 +711,7 @@ void loadComplexGeometry()
 
 void setupPerRayTotalBudgetBuffer()
 {
-	perPerRayBudget = new int[width * height * 4];
+	int* perPerRayBudget = new int[width * height * 4];
 
 	// initialize additional rays buffer
 	for (unsigned int i = 0; i < width * height; i++)
@@ -712,6 +729,28 @@ void setupPerRayTotalBudgetBuffer()
 	context["additional_rays_buffer_input"]->set(additional_rays_buffer);
 
 	delete[] perPerRayBudget;
+}
+
+void setupPerRayWindowSizeBuffer()
+{
+	int* perPerRayWindow_Size = new int[width * height * 4];
+
+	// initialize additional rays buffer
+	for (unsigned int i = 0; i < width * height; i++)
+	{
+		perPerRayWindow_Size[i * 4] = static_cast<unsigned int>(windowSize);
+		perPerRayWindow_Size[i * 4 + 1] = static_cast<unsigned int>(windowSize);
+		perPerRayWindow_Size[i * 4 + 2] = static_cast<unsigned int>(windowSize);
+		perPerRayWindow_Size[i * 4 + 3] = static_cast<unsigned int>(windowSize);
+	}
+
+	// Additional rays test buffer setup
+	Buffer additional_rays_buffer = sutil::createInputOutputBuffer(context, RT_FORMAT_UNSIGNED_INT4, width, height, false);
+	memcpy(additional_rays_buffer->map(), perPerRayWindow_Size, sizeof(int) * width * height * 4);
+	additional_rays_buffer->unmap();
+	context["window_size_buffer"]->set(additional_rays_buffer);
+
+	delete[] perPerRayWindow_Size;
 }
 
 void setupPostprocessing()
@@ -789,6 +828,7 @@ void glutDisplay()
 		//sutil::displayBufferGL(getOutputDepthBuffer());
 		//sutil::displayBufferGL(getDepthGradientBuffer());
 		//sutil::displayBufferGL(getHoelderAlphaBuffer());
+		//sutil::displayBufferGL(getHoelderAdaptiveSceneDepthBuffer());
 	}
 	else
 	{
