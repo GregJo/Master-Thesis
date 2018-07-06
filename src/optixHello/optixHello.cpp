@@ -169,6 +169,32 @@ I believe it was regarding the finite differences, which will become more and mo
 -> Update the depth map and use the most current depth information avaible to compute gradient via finite differences.
 */
 
+/*
+Most important thing i learned regarding using the current gradient values: it is actually only the current level gradient information derived from the samples only obtained 
+adaptively at the current level, disregarding all previously evaluated samples for the previous level gradients. This might not work for my current implementation though.
+
+Another important point to consider is how super pixels are represented regarding the sampling. 
+Currently if i say that i use one sample per pixel in a 64x64 window/super pixel i mean that i have 64x64 samples, one for each pixel of that window/super pixel. 
+In Lessig's implementation it means having only one sample per pixel the same as having one sample per e.g. 64x64 window/super pixel. 
+
+Regarding Lessigs implementation i also need to try out atomics in order to strictly avoid mulltiple computations of the window/super pixel representing color value/values 
+as opposed to what i have now, allowing to compute the same value and writing it until following threads "notice" that it is already computed.
+
+Regarding Lessigs C++ code: the most intresting/relevant part to me should be found in the utilities folder and the hoelder integrator/sampler (not sure anymore here).
+
+My current task still stands from last meeting: implement multi-resolution hoelder alpha computation. 
+Also as it currently stands this path tracing implementation will be progressive (i don't see a way yet to evaluate all the levels within one frames time).
+Important things to consider:
+	- I need an accumulation buffer for the additional adaptive samples. It should be updated as follow: if whithin one frame the ACCUMULATED number of additional, 
+	  adaptive samples is greater than what i allow to evaluate whithin the time of one frame, then update the number according to 'currently total avaible samples 
+	  minus the maximum allowed number of samples per ray used' and CARRY OVER the remaining samples to the next frames render run. 
+	  Repeat until all accumulated, addtional, adaptive samples depleted.
+	- I need a specific buffer/map to keep track of all pixel that belong to an area, which should be refined/need a finer level of resolution. Indicate all pixel in an are that 
+	  needs to be refined with a negative value. Reset a refined area pxels value right after refinement at current, finer level.
+	- I need a variable to keep track of how many levels i already descended. The finest level is reached if the area has a size of 2x2, or probably 3x3 pixels.
+	- I need a variable that keeps track of the current area size at the current in (pixel)x(pixel). with eac level descended the window size is halved.
+*/
+
 #ifdef __APPLE__
 #  include <GLUT/glut.h>
 #else
@@ -231,8 +257,9 @@ bool usePostProcessing = false;
 CommandList commandListAdaptive;
 
 // Variance based adaptive sampling specific
-const uint windowSize = 32;
-const uint maxAdditionalRaysTotal = 50;
+const uint windowSize = 64;
+//const uint maxAdditionalRaysTotal = 50;
+const uint maxAdditionalRaysTotal = 0;			// If using hoelder set this to zero 
 const uint maxAdditionalRaysPerRenderRun = 3;
 float* perWindowVariance = nullptr;
 int* perPerRayBudget = nullptr;
@@ -258,8 +285,8 @@ void glutMousePress(int button, int state, int x, int y);
 void glutMouseMotion(int x, int y);
 void glutResize(int w, int h);
 
-void setupVarianceBuffer();
-void setupPerRayBudgetBuffer();
+//void setupVarianceBuffer();
+void setupPerRayTotalBudgetBuffer();
 
 //------------------------------------------------------------------------------
 //
@@ -303,6 +330,7 @@ Buffer getDepthGradientBuffer()
 	return context["depth_gradient_buffer"]->getBuffer();
 }
 
+// Debug
 Buffer getHoelderAlphaBuffer()
 {
 	return context["hoelder_alpha_buffer"]->getBuffer();
@@ -367,6 +395,20 @@ GeometryInstance createParallelogram(
 	return gi;
 }
 
+// 'fromBufferName' buffer will be declared and created with the specified parameters and passed to 'toBufferName' buffer while it is declared at the same time.
+// The 'toBufferName' buffer will have the same specifications as the 'fromBufferName' buffer.
+void createAndPassBufferFromTo(std::string fromBufferName, std::string toBufferName, RTformat bufferFormat, uint32_t width, uint32_t height, bool use_pbo)
+{
+	Buffer buffer = sutil::createOutputBuffer(context, bufferFormat, width, height, use_pbo);
+	context[fromBufferName]->set(buffer);
+
+	context->declareVariable(toBufferName)->set(context[fromBufferName]->getBuffer());
+}
+
+void passBufferFromTo(std::string fromBufferName, std::string toBufferName)
+{
+	context->declareVariable(toBufferName)->set(context[fromBufferName]->getBuffer());
+}
 
 void createContext()
 {
@@ -384,8 +426,7 @@ void createContext()
 	context["pathtrace_shadow_ray_type"]->setUint(1u);
 	context["rr_begin_depth"]->setUint(rr_begin_depth);
 
-	Buffer buffer = sutil::createOutputBuffer(context, RT_FORMAT_FLOAT4, width, height, use_pbo);
-	context["output_buffer"]->set(buffer);
+	createAndPassBufferFromTo("output_buffer", "input_buffer", RT_FORMAT_FLOAT4, width, height, use_pbo);
 
 	// Setup programs
 	const char *ptx = sutil::getPtxString(SAMPLE_NAME, "optixPathTracer.cu");
@@ -393,25 +434,32 @@ void createContext()
 	context->setExceptionProgram(0, context->createProgramFromPTXString(ptx, "exception"));
 	context->setMissProgram(0, context->createProgramFromPTXString(ptx, "miss"));
 
-	context->declareVariable("input_buffer")->set(getOutputBuffer());
-
 	// Post processing
-
-	Buffer output_scene_depth_buffer = sutil::createOutputBuffer(context, RT_FORMAT_FLOAT4, width, height, use_pbo);
-	context["output_scene_depth_buffer"]->set(output_scene_depth_buffer);
+	createAndPassBufferFromTo("output_scene_depth_buffer", "input_scene_depth_buffer", RT_FORMAT_FLOAT4, width, height, use_pbo);
 
 	// This buffer is for debug
 	Buffer depth_gradient_buffer = sutil::createOutputBuffer(context, RT_FORMAT_FLOAT4, width, height, use_pbo);
 	context["depth_gradient_buffer"]->set(depth_gradient_buffer);
 
-	setupPerRayBudgetBuffer();
-	setupVarianceBuffer();
+	// This buffer is for debug
+	Buffer hoelder_alpha_buffer = sutil::createOutputBuffer(context, RT_FORMAT_FLOAT4, width, height, use_pbo);
+	context["hoelder_alpha_buffer"]->set(hoelder_alpha_buffer);
+
+	setupPerRayTotalBudgetBuffer();
+	//setupVarianceBuffer();
 
 	// Adaptive source file
 	const char *adaptive_ptx = sutil::getPtxString(SAMPLE_NAME, "adaptive.cu");
 	// Output buffer of adaptive post processing 
-	Buffer post_process_out_buffer = sutil::createOutputBuffer(context, RT_FORMAT_FLOAT4, width, height, use_pbo);
-	context["post_process_output_buffer"]->set(post_process_out_buffer);
+	createAndPassBufferFromTo("post_process_output_buffer", "post_process_input_buffer", RT_FORMAT_FLOAT4, width, height, use_pbo);
+
+	createAndPassBufferFromTo("per_window_variance_buffer_input", "per_window_variance_buffer_output", RT_FORMAT_FLOAT4, width, height, use_pbo);
+	context->declareVariable("adaptive_samples_budget_buffer")->set(getPerRayBudgetBuffer());
+
+	passBufferFromTo("input_scene_depth_buffer", "post_process_input_scene_depth_buffer");
+
+	Buffer hoelder_refinement_buffer = sutil::createOutputBuffer(context, RT_FORMAT_INT4, width, height, use_pbo);
+	context["hoelder_refinement_buffer"]->set(hoelder_refinement_buffer);
 
 	Program adaptive_ray_gen_program = context->createProgramFromPTXString(adaptive_ptx, "pathtrace_camera_adaptive");
 	context->setRayGenerationProgram(1, adaptive_ray_gen_program);		
@@ -422,16 +470,8 @@ void createContext()
 
 	// Adaptive variables
 	context["window_size"]->setUint(windowSize);
-	context["max_ray_budget_total"]->setUint(maxAdditionalRaysTotal);
-	context["max_per_launch_idx_ray_budget"]->setUint(maxAdditionalRaysPerRenderRun);
-
-	context->declareVariable("per_window_variance_buffer_output")->set(getPerWindowVarianceBuffer());
-	context->declareVariable("additional_rays_buffer_output")->set(getPerRayBudgetBuffer());
-	context->declareVariable("input_scene_depth_buffer")->set(getOutputDepthBuffer());
-	
-	context->declareVariable("post_process_input_buffer")->set(getPostProcessOutputBuffer());
-	context->declareVariable("post_process_input_scene_depth_buffer")->set(getPostProcessInputDepthBuffer());
-
+	//context["max_ray_budget_total"]->setUint(maxAdditionalRaysTotal);
+	context["max_per_frame_samples_budget"]->setUint(maxAdditionalRaysPerRenderRun);
 	context["camera_changed"]->setInt(1);
 }
 
@@ -652,30 +692,7 @@ void loadComplexGeometry()
 // Post Processing begin
 //
 
-void setupVarianceBuffer() 
-{
-	if (perWindowVariance == nullptr)
-	{
-		perWindowVariance = new float[width % windowSize * height % windowSize * 4];
-
-		for (unsigned int i = 0; i < width % windowSize * height % windowSize; i++)
-		{
-			perWindowVariance[i * 4] = -1.0f;
-			perWindowVariance[i * 4 + 1] = -1.0f;
-			perWindowVariance[i * 4 + 2] = -1.0f;
-			perWindowVariance[i * 4 + 3] = -1.0f;
-		}
-	}
-
-	Buffer per_window_variance_buffer_input = sutil::createInputOutputBuffer(context, RT_FORMAT_FLOAT4, width, height, false);
-	memcpy(per_window_variance_buffer_input->map(), perWindowVariance, sizeof(unsigned char) * width % windowSize * height % windowSize * 4);
-	per_window_variance_buffer_input->unmap();
-	context["per_window_variance_buffer_input"]->set(per_window_variance_buffer_input);
-
-	delete[] perWindowVariance;
-}
-
-void setupPerRayBudgetBuffer()
+void setupPerRayTotalBudgetBuffer()
 {
 	perPerRayBudget = new int[width * height * 4];
 
@@ -700,12 +717,6 @@ void setupPerRayBudgetBuffer()
 void setupPostprocessing()
 {
 	commandListAdaptive = context->createCommandList();
-
-	//context["additional_rays_buffer"]->set(additional_rays_buffer);
-
-	//setupVarianceBuffer();
-	// Input buffer for post processing
-	//setupPerRayBudgetBuffer();
 
 	commandListAdaptive->appendLaunch(1, width, height);
 	commandListAdaptive->finalize();
@@ -774,9 +785,10 @@ void glutDisplay()
 	{
 		//setupVarianceBuffer();
 		commandListAdaptive->execute();
-		//sutil::displayBufferGL(getPostProcessOutputBuffer());
-		sutil::displayBufferGL(getOutputDepthBuffer());
+		sutil::displayBufferGL(getPostProcessOutputBuffer());
+		//sutil::displayBufferGL(getOutputDepthBuffer());
 		//sutil::displayBufferGL(getDepthGradientBuffer());
+		//sutil::displayBufferGL(getHoelderAlphaBuffer());
 	}
 	else
 	{

@@ -80,7 +80,8 @@ rtDeclareVariable(unsigned int, pathtrace_ray_type, , );
 
 rtDeclareVariable(unsigned int, window_size, , );
 //rtDeclareVariable(unsigned int, max_ray_budget_total, , ) = static_cast<uint>(50u);
-rtDeclareVariable(unsigned int, max_per_launch_idx_ray_budget, , ) = static_cast<uint>(5u);		/* this variable will be written by the user */
+rtDeclareVariable(unsigned int, max_per_frame_samples_budget, , ) = static_cast<uint>(5u);		/* this variable can be written by the user */
+rtDeclareVariable(int, camera_changed, , );
 
 //
 // Adaptive version of pathtracing begin
@@ -88,8 +89,10 @@ rtDeclareVariable(unsigned int, max_per_launch_idx_ray_budget, , ) = static_cast
 
 /*--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
 /* Adaptive additional rays variables */
-//rtDeclareVariable(unsigned int, max_per_launch_idx_ray_budget, , ) = static_cast<uint>(5u);		/* this variable will be written by the user */
-rtBuffer<int4, 2>   additional_rays_buffer_output;										/* this buffer will be initialized by the host, but must also be modified by the graphics device */
+//rtDeclareVariable(unsigned int, max_per_frame_samples_budget, , ) = static_cast<uint>(5u);		/* this variable will be written by the user */
+rtBuffer<int4, 2>	  adaptive_samples_budget_buffer;									/* this buffer will be initialized by the host, but must also be modified by the graphics device */
+rtBuffer<int4, 2>	  hoelder_refinement_buffer;										/* this buffer contains the information, where refinement will take place according to
+																						hoelder regularity criterion, everywhere where refinement is needed value is 1, else zero */
 
 rtBuffer<float4, 2>	  per_window_variance_buffer_output;
 
@@ -100,6 +103,8 @@ rtBuffer<float4, 2>   post_process_output_buffer;										/* this buffer contai
 
 // For debug!
 rtBuffer<float4, 2>   depth_gradient_buffer;
+// For debug!
+rtBuffer<float4, 2>   hoelder_alpha_buffer;
 
 //
 // Hödler Adaptive Image Synthesis (begin)
@@ -310,10 +315,10 @@ static __device__ __inline__ float compute_window_hoelder(uint2 center, uint win
 
 		float log_base = log(fabsf(neighbor_center_distance) + 1.0f);
 
-		if (i % window_size <= i / window_size)
-		{
-			post_process_output_buffer[idx] = make_float4(100.0f, 0.0f, 100.0f, 1.0f);
-		}
+		//if (i % window_size <= i / window_size)
+		//{
+		//	post_process_output_buffer[idx] = make_float4(100.0f, 0.0f, 100.0f, 1.0f);
+		//}
 
 		//if (log_base == 0.0f)
 		//{
@@ -343,7 +348,7 @@ static __device__ __inline__ float compute_window_hoelder(uint2 center, uint win
 			}
 			else
 			{
-				post_process_output_buffer[idx] = make_float4(100.0f, 0.0f, 100.0f, 1.0f);
+				//post_process_output_buffer[idx] = make_float4(100.0f, 0.0f, 100.0f, 1.0f);
 				//rtPrintf("\nnon-smooth!!!\n");
 				float log_x = log(fabsf(1.0f / 2.0f /*hoelder constant, also try value 3*/ * (centerColorMean - neighborColorMean)) + 1.0f);
 			}
@@ -366,26 +371,101 @@ static __device__ __inline__ float compute_window_hoelder(uint2 center, uint win
 	return alpha;
 };
 
-static __device__ __inline__ void hoelder_refinement(uint2 center, uint window_size)
+static __device__ __inline__ float4 hoelder_refinement(float alpha, uint2 center, uint window_size)
 {
+	float4 alphas = make_float4(0.0f);
 
+	uint2 center1 = center + make_uint2((center.x - 0.5 * center.x), (center.y - 0.5 * center.y));
+	uint2 center2 = center + make_uint2((center.x + 0.5 * center.x), (center.y - 0.5 * center.y));
+	uint2 center3 = center + make_uint2((center.x - 0.5 * center.x), (center.y + 0.5 * center.y));
+	uint2 center4 = center + make_uint2((center.x + 0.5 * center.x), (center.y + 0.5 * center.y));
+
+	uint half_window_size = 0.5f * window_size;
+
+	if (alpha < 0.5f /* Arbitary alpha threshold */)
+	{
+		alphas.x = compute_window_hoelder(center1, half_window_size);
+		alphas.y = compute_window_hoelder(center2, half_window_size);
+		alphas.z = compute_window_hoelder(center3, half_window_size);
+		alphas.w = compute_window_hoelder(center4, half_window_size);
+	}
+
+	return alphas;
 }
 
-static __device__ __inline__ uint compute_hoelder_samples_number(uint2 current_launch_index, float alpha, uint window_size)
+static __device__ __inline__ uint compute_hoelder_samples_number(uint2 current_launch_index, uint window_size)
 {
 	//rtPrintf("Hoelder alpha: %f\n\n", alpha);
 
-	float oversampling_factor = 1.25f;
+	//float oversampling_factor = 1.25f;
 
-	uint samples_number = alpha * oversampling_factor * 1.0f;
+	uint samples_number = min(adaptive_samples_budget_buffer[current_launch_index].x, max_per_frame_samples_budget);
 
-	if (additional_rays_buffer_output[current_launch_index].x > 0)
+	//rtPrintf("Currently avaible adaptive samples: %d\n\n", samples_number);
+
+	if (adaptive_samples_budget_buffer[current_launch_index].x > 0)
 	{
-		samples_number = static_cast<uint>(clamp(static_cast<float>(samples_number), 0.0f, static_cast<float>(max_per_launch_idx_ray_budget)));
-		additional_rays_buffer_output[current_launch_index] = make_int4(additional_rays_buffer_output[current_launch_index].x - static_cast<int>(samples_number));
+		//samples_number = static_cast<uint>(clamp(static_cast<float>(samples_number), 0.0f, static_cast<float>(max_per_frame_samples_budget)));
+		adaptive_samples_budget_buffer[current_launch_index] = make_int4(adaptive_samples_budget_buffer[current_launch_index].x - static_cast<int>(samples_number));
 	}
 
+	/*rtPrintf("Currently avaible adaptive samples: %d\n\n", adaptive_samples_budget_buffer[current_launch_index].x);*/
+
 	return samples_number;
+};
+
+static __device__ __inline__ uint hoelder_compute_current_samples_number_and_manage_buffers(uint2 current_launch_index, uint2 current_window_center, uint window_size)
+{
+	float hoelder_alpha = -1.0f;
+	float hoelder_alpha_no_refinement_threshhold = 0.5f;
+
+	//rtPrintf("Hoelder refinement buffer value: %d\n", hoelder_refinement_buffer[current_launch_index].x);
+	//if (adaptive_samples_budget_buffer[current_launch_index].x == 1)
+	//{
+	//	rtPrintf("Currently avaible adaptive samples: %d\n\n", adaptive_samples_budget_buffer[current_launch_index].x);
+	//}
+	/*rtPrintf("Currently avaible adaptive samples: %d\n\n", adaptive_samples_budget_buffer[current_launch_index].x);*/
+
+	if (hoelder_refinement_buffer[current_launch_index].x == 1)
+	{
+		//rtPrintf("Compute!!!\n\n");
+		hoelder_alpha = compute_window_hoelder(current_window_center, window_size);
+		hoelder_refinement_buffer[current_launch_index] = make_int4(0);
+
+		//printf("Current hoelder: %f\n\n", hoelder_alpha);
+	}
+
+	if (hoelder_alpha < 0.0f)
+	{
+		//rtPrintf("Set to one hundred!!!\n\n");
+		hoelder_alpha = 100.0f;
+	}
+
+	if (hoelder_alpha < hoelder_alpha_no_refinement_threshhold)
+	{
+		//printf("Current hoelder: %f\n\n", hoelder_alpha);
+		//rtPrintf("Refine next frame!!!\n\n");
+		hoelder_refinement_buffer[current_launch_index] = make_int4(1);
+		adaptive_samples_budget_buffer[current_launch_index] += make_int4(1);// hoelder_refinement_buffer[current_launch_index];
+		//rtPrintf("Currently avaible adaptive samples: %d\n\n", adaptive_samples_budget_buffer[current_launch_index].x);
+	}
+
+	//hoelder_alpha_buffer[current_launch_index] = make_float4(hoelder_alpha * 100.0f);
+
+	return compute_hoelder_samples_number(current_launch_index, window_size);
+	//return 0;
+};
+
+static __device__ __inline__ void initialize_hoelder_refinement_buffer(uint2 current_launch_index, int frame_number)
+{
+	if (frame_number == 1 || camera_changed == 1)
+	{
+		//rtPrintf("Initialize holder refinement buffer!!!\n\n");
+		hoelder_refinement_buffer[current_launch_index] = make_int4(1);
+		adaptive_samples_budget_buffer[current_launch_index] = make_int4(0);
+
+		//rtPrintf("Currently avaible adaptive samples: %d\n\n", adaptive_samples_budget_buffer[current_launch_index].x);
+	}
 };
 
 //
@@ -402,8 +482,8 @@ static __device__ __inline__ float compute_window_variance(uint2 center, uint wi
 
 	float mean = 0.f;
 	float variance = 0.f;
-	//if (per_window_variance_buffer_output[center].x < 0.0f)
-	//{
+	if (per_window_variance_buffer_output[center].x < 0.0f)
+	{
 		uint squared_window_size = window_size * window_size;
 		uint half_window_size = (window_size / 2) + (window_size % 2);
 		uint2 top_left_window_corner = make_uint2(center.x - half_window_size, center.y - half_window_size);
@@ -435,11 +515,11 @@ static __device__ __inline__ float compute_window_variance(uint2 center, uint wi
 			//{
 			//	post_process_output_buffer[idx] = make_float4(100.0f, 0.0f, 100.0f, 1.0f);
 			//}
-			if (i % window_size == window_size - 1 && i / window_size == window_size - 1)
-			{
+			//if (i % window_size == window_size - 1 && i / window_size == window_size - 1)
+			//{
 				//post_process_output_buffer[idx] = make_float4(100.0f, 0.0f, 100.0f, 1.0f);
-				post_process_output_buffer[top_left_window_corner] = make_float4(100.0f, 0.0f, 0.0f, 1.0f);
-			}
+				//post_process_output_buffer[top_left_window_corner] = make_float4(100.0f, 0.0f, 0.0f, 1.0f);
+			//}
 		}
 
 		/*mean *= 1.f/ squared_window_size;*/
@@ -459,11 +539,11 @@ static __device__ __inline__ float compute_window_variance(uint2 center, uint wi
 		variance = 1.f / squared_window_size * variance;
 
 		per_window_variance_buffer_output[center] = make_float4(variance);
-	//}
-	//else
-	//{
-	//	variance = per_window_variance_buffer_output[center].x;
-	//}
+	}
+	else
+	{
+		variance = per_window_variance_buffer_output[center].x;
+	}
 
 	return variance;
 };
@@ -472,10 +552,10 @@ static __device__ __inline__ uint compute_samples_number(uint2 current_launch_in
 {
 	uint samples_number = 0;
 
-	if (additional_rays_buffer_output[current_launch_index].x > 0)
+	if (adaptive_samples_budget_buffer[current_launch_index].x > 0)
 	{
-		samples_number = static_cast<uint>(clamp(static_cast<float>(variance * max_per_launch_idx_ray_budget), 0.0f, static_cast<float>(max_per_launch_idx_ray_budget)));
-		additional_rays_buffer_output[current_launch_index] = make_int4(additional_rays_buffer_output[current_launch_index].x - static_cast<int>(samples_number));
+		samples_number = static_cast<uint>(clamp(static_cast<float>(variance * max_per_frame_samples_budget), 0.0f, static_cast<float>(max_per_frame_samples_budget)));
+		adaptive_samples_budget_buffer[current_launch_index] = make_int4(adaptive_samples_budget_buffer[current_launch_index].x - static_cast<int>(samples_number));
 	}
 
 	return samples_number;
@@ -505,13 +585,19 @@ static __device__ __inline__ uint compute_current_samples_number(uint2 current_l
 
 	uint2 current_window_center = make_uint2(times_launch_index.x + horizontal_padding + half_window_size, times_launch_index.y + vertical_padding + half_window_size);
 
-	float variance = compute_window_variance(current_window_center, window_size);
+	//float variance = compute_window_variance(current_window_center, window_size);
 
 	//float hoelder_alpha = compute_window_hoelder(current_window_center, window_size);
 
-	sample_number = compute_samples_number(current_launch_index, (30.0f * variance));
+	//hoelder_alpha_buffer[current_launch_index] = make_float4(hoelder_alpha * 100.0f);
 
-	//sample_number = compute_hoelder_samples_number(current_launch_index, (100.0f * hoelder_alpha), window_size);
+	//sample_number = compute_samples_number(current_launch_index, (30.0f * variance));
+
+	//sample_number = compute_hoelder_samples_number(current_launch_index, (10.0f * hoelder_alpha), window_size);
+
+	sample_number = hoelder_compute_current_samples_number_and_manage_buffers(current_launch_index, current_window_center, window_size);
+
+	//hoelder_refinement(hoelder_alpha, current_window_center, window_size);
 
 	//rtPrintf("Sample number: %d\n\n", sample_number);
 
@@ -520,7 +606,7 @@ static __device__ __inline__ uint compute_current_samples_number(uint2 current_l
 
 RT_PROGRAM void pathtrace_camera_adaptive()
 {
-	//rtPrintf("Current samples number: %d\n\n", additional_rays_buffer_output[launch_index].x);
+	//rtPrintf("Current samples number: %d\n\n", adaptive_samples_budget_buffer[launch_index].x);
 
 	// Debug!
 	depth_gradient_buffer[launch_index] = make_float4(0.0f);
@@ -531,6 +617,9 @@ RT_PROGRAM void pathtrace_camera_adaptive()
 	float2 pixel = (make_float2(launch_index)) * inv_screen - 1.f;
 
 	float2 jitter_scale = inv_screen / sqrt_num_samples;
+
+	initialize_hoelder_refinement_buffer(launch_index, frame_number);
+
 	unsigned int adaptive_samples_per_pixel = compute_current_samples_number(launch_index, window_size);
 	unsigned int current_samples_per_pixel = adaptive_samples_per_pixel;
 	float3 result = make_float3(0.0f);
@@ -574,20 +663,20 @@ RT_PROGRAM void pathtrace_camera_adaptive()
 			// return new segments to be traced here.
 			for (;;)
 			{
-				//if (prd.depth == 1)
-				//{
-				//	float ray_length = fabsf(length((prd.origin - eye)));
-				//	float normalized_ray_length = ray_length / far_plane;//2500.0f;
+				if (prd.depth == 1)
+				{
+					float ray_length = fabsf(length((prd.origin - eye)));
+					float normalized_ray_length = ray_length / far_plane;//2500.0f;
 
-				//	float a = 1.0f / (float)frame_number;
-				//	float3 old_depth = make_float3(input_scene_depth_buffer[launch_index]);
-				//	input_scene_depth_buffer[launch_index] = make_float4(lerp(old_depth, make_float3(normalized_ray_length), a), 1.0f);
+					float a = 1.0f / (float)frame_number;
+					float3 old_depth = make_float3(input_scene_depth_buffer[launch_index]);
+					input_scene_depth_buffer[launch_index] = make_float4(lerp(old_depth, make_float3(normalized_ray_length), a), 1.0f);
 
-				//	//if (frame_number == 1)
-				//	//{
-				//	//	input_scene_depth_buffer[launch_index] = make_float4(normalized_ray_length);
-				//	//}
-				//}
+					//if (frame_number == 1)
+					//{
+					//	input_scene_depth_buffer[launch_index] = make_float4(normalized_ray_length);
+					//}
+				}
 
 				Ray ray = make_Ray(ray_origin, ray_direction, pathtrace_ray_type, scene_epsilon, RT_DEFAULT_MAX);
 				rtTrace(top_object, ray, prd);
@@ -623,7 +712,7 @@ RT_PROGRAM void pathtrace_camera_adaptive()
 		pixel_color = result / (adaptive_sqrt_num_samples*adaptive_sqrt_num_samples);
 
 		// Pink coloring of tiles for debug
-		//if (adaptive_samples_per_pixel > 1)
+		//if (adaptive_samples_per_pixel == 1)
 		//{
 		//	pixel_color = make_float3(100.0f, 0.0f, 100.0f);
 		//}
