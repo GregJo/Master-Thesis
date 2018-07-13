@@ -89,7 +89,7 @@ rtBuffer<float4, 2>				 post_process_input_buffer;
 rtBuffer<float4, 2>				 post_process_input_scene_depth_buffer;
 
 rtDeclareVariable(unsigned int, window_size, , );
-rtDeclareVariable(unsigned int, max_ray_budget_total, , ) = static_cast<uint>(50u);
+rtDeclareVariable(unsigned int, max_ray_budget_total, , ) = static_cast<uint>(50u);				/* this variable will be written by the user */
 rtDeclareVariable(unsigned int, max_per_launch_idx_ray_budget, , ) = static_cast<uint>(5u);		/* this variable will be written by the user */
 rtDeclareVariable(int, camera_changed, , );
 
@@ -137,14 +137,15 @@ RT_PROGRAM void pathtrace_camera()
 		reset_additional_rays_buffer(launch_index);
 	}
 
-	if (camera_changed == 0 && frame_number > 1)
-	{
+	//if (camera_changed == 0 && frame_number > 1)
+	//{
 		//rtPrintf("Using postprocess values!!!\n\n");
 		output_buffer[launch_index] = post_process_input_buffer[launch_index];
 		output_scene_depth_buffer[launch_index] = post_process_input_scene_depth_buffer[launch_index];
-	}
+	//}
 	//else
-	//{
+	if ((camera_changed == 1 || frame_number == 1))
+	{
 		do
 		{
 			//
@@ -233,7 +234,7 @@ RT_PROGRAM void pathtrace_camera()
 		{
 			output_buffer[launch_index] = make_float4(pixel_color, 1.0f);
 		}
-	//}
+	}
 	per_window_variance_buffer_input[compute_variance_window_center(launch_index, window_size)] = make_float4(-1.0f);
 }
 

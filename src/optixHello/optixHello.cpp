@@ -195,6 +195,22 @@ Important things to consider:
 	- I need a variable that keeps track of the current area size at the current in (pixel)x(pixel). with eac level descended the window size is halved.
 */
 
+/*
+I now basically completed the current task and now i need to make it work correctly. As for now very homogenious areas seem to be refined to the finest level, 
+meaning the hoelder alpha is close to zero. The opposite should be the case. So i have to make sure, that the hoelder alpha comuptation is correct.
+
+Update: 
+I am now more confident that the hoelder alpha computation is and was correct, the only thing bothering me now is that it is very small 
+(to be "effective" the computed hoelder alpha has to be at least multiplied by a factor of hundred).
+
+Also i found out that atomics most likely will not result in performance gain, as i tried this out on the adaptive variance based implementation, 
+assuming i am using atomics correctly. Maybe setting the buffer type to 'RT_BUFFER_INPUT_OUTPUT' and using the flag 'RT_BUFFER_GPU_LOCAL' 
+(parameter 'type' = RT_BUFFER_INPUT_OUTPUT | RT_BUFFER_GPU_LOCAL) might be worth trying, since it creates on each device a local copy of each buffer 
+(in my case there is only one) and thus may actually be totally not for my use case, because of having only one GPU device anyway.
+Another thought is, that atomics might be totally useless in my case, as the other 'GPU threads' still request an atomic exchange in my case and thus 
+the exchanges will still be executed just as many times as without atomics.
+*/
+
 #ifdef __APPLE__
 #  include <GLUT/glut.h>
 #else
@@ -239,7 +255,7 @@ uint32_t       height = 512;
 bool           use_pbo = true;
 
 int            frame_number = 1;
-int            sqrt_num_samples = 1;
+int            sqrt_num_samples = 2;
 int            rr_begin_depth = 1;
 Program        pgram_intersection = 0;
 Program        pgram_bounding_box = 0;
@@ -257,7 +273,7 @@ bool usePostProcessing = false;
 CommandList commandListAdaptive;
 
 // Variance based adaptive sampling specific
-const uint windowSize = 64;
+const uint windowSize = 32;						// Powers of two are your friend
 //const uint maxAdditionalRaysTotal = 50;
 const uint maxAdditionalRaysTotal = 0;			// If using hoelder set this to zero 
 const uint maxAdditionalRaysPerRenderRun = 3;
@@ -346,6 +362,24 @@ Buffer getHoelderAlphaBuffer()
 Buffer getHoelderAdaptiveSceneDepthBuffer() 
 {
 	return context["hoelder_adaptive_scene_depth_buffer"]->getBuffer();
+}
+
+// Debug
+Buffer getHoelderRefinementBuffer()
+{
+	return context["hoelder_refinement_buffer"]->getBuffer();
+}
+
+// Debug
+Buffer getTotalSampleCountBuffer()
+{
+	return context["total_sample_count_buffer"]->getBuffer();
+}
+
+// Debug
+Buffer getPerWindowVarianceBufferOutput()
+{
+	return context["per_window_variance_buffer_output"]->getBuffer();
 }
 
 void destroyContext()
@@ -472,8 +506,12 @@ void createContext()
 
 	passBufferFromTo("input_scene_depth_buffer", "post_process_input_scene_depth_buffer");
 
-	Buffer hoelder_refinement_buffer = sutil::createOutputBuffer(context, RT_FORMAT_INT4, width, height, use_pbo);
+	//Buffer hoelder_refinement_buffer = sutil::createOutputBuffer(context, RT_FORMAT_INT4, width, height, use_pbo);
+	Buffer hoelder_refinement_buffer = sutil::createOutputBuffer(context, RT_FORMAT_FLOAT4, width, height, use_pbo);
 	context["hoelder_refinement_buffer"]->set(hoelder_refinement_buffer);
+
+	Buffer total_sample_count_buffer = sutil::createOutputBuffer(context, RT_FORMAT_FLOAT4, width, height, use_pbo);
+	context["total_sample_count_buffer"]->set(total_sample_count_buffer);
 
 	Buffer hoelder_adaptive_scene_depth_buffer = sutil::createOutputBuffer(context, RT_FORMAT_FLOAT4, width, height, use_pbo);
 	context["hoelder_adaptive_scene_depth_buffer"]->set(hoelder_adaptive_scene_depth_buffer);
@@ -824,11 +862,14 @@ void glutDisplay()
 	{
 		//setupVarianceBuffer();
 		commandListAdaptive->execute();
-		sutil::displayBufferGL(getPostProcessOutputBuffer());
+		//sutil::displayBufferGL(getPostProcessOutputBuffer());
 		//sutil::displayBufferGL(getOutputDepthBuffer());
 		//sutil::displayBufferGL(getDepthGradientBuffer());
 		//sutil::displayBufferGL(getHoelderAlphaBuffer());
+		//sutil::displayBufferGL(getHoelderRefinementBuffer());
+		sutil::displayBufferGL(getTotalSampleCountBuffer());
 		//sutil::displayBufferGL(getHoelderAdaptiveSceneDepthBuffer());
+		//sutil::displayBufferGL(getPerWindowVarianceBuffer());
 	}
 	else
 	{
