@@ -28,7 +28,10 @@
 
 #include <optixu/optixu_math_namespace.h>
 #include "optixPathTracer.h"
+
 #include "random.h"
+#include "MitchellFilterDevice.h"
+#include "Buffers.h"
 
 using namespace optix;
 
@@ -78,15 +81,10 @@ rtDeclareVariable(unsigned int,  rr_begin_depth, , );
 rtDeclareVariable(unsigned int,  pathtrace_ray_type, , );
 rtDeclareVariable(unsigned int,  pathtrace_shadow_ray_type, , );
 
-rtBuffer<float4, 2>              output_buffer;
 rtBuffer<ParallelogramLight>     lights;
 
 // Adaptive post processing variables and buffers
 rtBuffer<int4, 2>				 additional_rays_buffer_input;										/* this buffer will be initialized by the host, but must also be modified by the graphics device */
-rtBuffer<float4, 2>              per_window_variance_buffer_input;
-rtBuffer<float4, 2>              output_scene_depth_buffer;
-rtBuffer<float4, 2>				 post_process_input_buffer;
-rtBuffer<float4, 2>				 post_process_input_scene_depth_buffer;
 
 rtDeclareVariable(unsigned int, window_size, , );
 rtDeclareVariable(unsigned int, max_ray_budget_total, , ) = static_cast<uint>(50u);				/* this variable will be written by the user */
@@ -96,6 +94,11 @@ rtDeclareVariable(int, camera_changed, , );
 static __device__ __inline__ void reset_additional_rays_buffer(uint2 current_launch_index)
 {
 	additional_rays_buffer_input[current_launch_index] = make_int4(static_cast<int>(max_ray_budget_total));
+};
+
+static __device__ __inline__ void reset_current_total_rays_buffer(uint2 current_launch_index)
+{
+	output_current_total_rays_buffer[current_launch_index] = make_int4(static_cast<int>(0));
 };
 
 static __device__ __inline__ uint2 compute_variance_window_center(uint2 current_launch_index, uint window_size)
@@ -134,16 +137,12 @@ RT_PROGRAM void pathtrace_camera()
 	{
 		//rtPrintf("Reset additional rays buffer!!!\n\n");
 		output_scene_depth_buffer[launch_index] = make_float4(1.0f, 1.0f, 1.0f, 1.0f);
+		output_filter_sum_buffer[launch_index] = make_float4(0.0f, 0.0f, 0.0f, 1.0f);
+		output_filter_x_sample_sum_buffer[launch_index] = make_float4(0.0f, 0.0f, 0.0f, 1.0f);
 		reset_additional_rays_buffer(launch_index);
+		reset_current_total_rays_buffer(launch_index);
 	}
 
-	//if (camera_changed == 0 && frame_number > 1)
-	//{
-		//rtPrintf("Using postprocess values!!!\n\n");
-		output_buffer[launch_index] = post_process_input_buffer[launch_index];
-		output_scene_depth_buffer[launch_index] = post_process_input_scene_depth_buffer[launch_index];
-	//}
-	//else
 	if ((camera_changed == 1 || frame_number == 1))
 	{
 		do
@@ -217,6 +216,18 @@ RT_PROGRAM void pathtrace_camera()
 
 			result += prd.result;
 			seed = prd.seed;
+			output_current_total_rays_buffer[launch_index].x++;
+			//rtPrintf("Launch index: [ %d , %d ], current total samples: [ %d ]\n\n", launch_index.x, launch_index.y, output_current_total_rays_buffer[launch_index].x);
+			//if (frame_number > 1)
+			//{
+				float2 sample = make_float2(d.x + launch_index.x, d.y + launch_index.y);
+
+				//float reconstruction_filter_weight = computeMitchellFilterSampleContribution(sample, launch_index);
+
+				//computeMitchellFilterSampleContributionInNeighborhood(sample, launch_index, prd.result, samples_per_pixel, screen, &output_current_total_rays_buffer, &output_buffer);
+				int current_total_rays = output_current_total_rays_buffer[launch_index].x;
+				computeMitchellFilterSampleContributionInNeighborhood(sample, launch_index, prd.result, screen, current_total_rays, &output_filter_sum_buffer, &output_filter_x_sample_sum_buffer);
+			//}
 		} while (--samples_per_pixel);
 
 		//
@@ -224,18 +235,22 @@ RT_PROGRAM void pathtrace_camera()
 		//
 		float3 pixel_color = result / (sqrt_num_samples*sqrt_num_samples);
 
-		if (frame_number > 1)
-		{
-			float a = 1.0f / (float)frame_number;
-			float3 old_color = make_float3(output_buffer[launch_index]);
-			output_buffer[launch_index] = make_float4(lerp(old_color, pixel_color, a), 1.0f);
-		}
-		else
-		{
-			output_buffer[launch_index] = make_float4(pixel_color, 1.0f);
-		}
+		//if (frame_number > 1)
+		//{
+		//	float a = 1.0f / (float)frame_number;
+		//	float3 old_color = make_float3(output_buffer[launch_index]);
+		//	output_buffer[launch_index] = make_float4(lerp(old_color, pixel_color, a), 1.0f);
+		//}
+		//if (frame_number == 1)
+		//{
+			//output_buffer[launch_index] = make_float4(pixel_color, 1.0f);
+		//}
+		//else
+		//{
+			evaluatePixelFileringEquation(launch_index, &output_buffer, &output_filter_sum_buffer, &output_filter_x_sample_sum_buffer);
+		//}
 	}
-	per_window_variance_buffer_input[compute_variance_window_center(launch_index, window_size)] = make_float4(-1.0f);
+	//per_window_variance_buffer_input[compute_variance_window_center(launch_index, window_size)] = make_float4(-1.0f);
 }
 
 

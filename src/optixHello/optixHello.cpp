@@ -211,6 +211,52 @@ Another thought is, that atomics might be totally useless in my case, as the oth
 the exchanges will still be executed just as many times as without atomics.
 */
 
+/*
+Implementation:
+
+Current most important implementation task: Mitchel filter for reconstruction.
+I am uncertain on how to keep the samples on my 'film' separate as for now they are added and linearly with the inverse of the frame number, as weight between the previously 
+computed and the currently computed MC sample, at each and every pixel. I need the seperate samples in order to apply a filter of a certain support/extent, to reconstruct a pixels value.
+
+I need to take care of oversampling at areas where the luminosity is low scaling the number of addtional samples by said luminosity. Another related issue is currently that at places
+where a MC sample ray completely misses the geometry the maximum amount of adaptive samples is applied, due to initial values certain helper buffers are filled with (easy to fix).
+
+The most urgent task though is the further refactoring and restructuring of the code at host and device side. At device side i require cleaner sepration of initial and adaptive sampling
+as well as a better separation of of different adaptive methods, which are currently the variance (!) based and the hoelder adaptive (!) implemetation (put them into seprate files).
+The next step is to extract a first kind of an adaptive framework on device side. 
+After that i will implement a MC renderer and extend it by a first adaptive MC rendering kind of framework.
+
+This is not really an implementation task, but i have to find at least two more scenes for proper evaluation and comparison, also i need to consider well suited scenes for 
+adaptive rendring (consisting of large regular areas/less complex geometry) as well as less suited scenese as i currently have one with the crytek sponza scene.
+
+One more thing to consider regarding the hoelder implementation is that it is possible to achieve correctly weighted hoelder regularity and accordingly adaptive sample number results by
+scaling them with the light source intensity (maybe also consider the distance from the light source when weighting).
+
+Consider importance sampling when implementing specular/glossy MC rendering model.
+
+
+Master Thesis:
+
+Write a first version of "Introduction" chapter.
+Read up on state of the art report about adaptive MC rendering and reconstruction and begin writing "Related Work" chapter.
+
+Methodology:
+"Equal time" and "equal quality" comparison between offline and online "Hoelder Adaptive Image Sythesis".  
+
+Update:
+My refactoring of device side adaptive MC implementations seems to be effective as it does not affect performance (currently only frod variance based adaptive MC implementation).
+I can do better by passing input buffers needed for computations and move implementation specific buffers to corresponding implementations, instead of having them clutter my 
+main adaptive postprocess file.
+
+Update 2:
+I attempted to base the refactoring, host- and device-side of my code on using the possibility to access buffers by ID on device side. 
+
+It did not work bacause i apparently do not fully understand how to access multiple buffers in the buffer holding all buffersby ID. 
+Another point is that only buffers of the same format may be grouped, which still might be worth it considering that i have many buffers of the same type.
+In addtion i had problems implementing to get a buffer that i bound to the buffer of buffer IDs, making the buffers accessible by their ID, to pass it to another buffer 
+(which i do for looping, implementing a cumulative depth buffer).
+*/
+
 #ifdef __APPLE__
 #  include <GLUT/glut.h>
 #else
@@ -239,6 +285,10 @@ the exchanges will still be executed just as many times as without atomics.
 
 #include "TrackballCamera.h"
 
+#include "MitchellFilter.h"
+
+//#include "AdaptivePathTraceRenderContext.h"
+
 using namespace optix;
 
 const char* const SAMPLE_NAME = "optixHello";
@@ -249,13 +299,14 @@ const char* const SAMPLE_NAME = "optixHello";
 //
 //------------------------------------------------------------------------------
 
+//AdaptivePathTraceContext* adaptive_PT_context;
 Context        context = 0;
-uint32_t       width = 512;
-uint32_t       height = 512;
+uint32_t       width = 256;
+uint32_t       height = 256;
 bool           use_pbo = true;
 
 int            frame_number = 1;
-int            sqrt_num_samples = 2;
+int            sqrt_num_samples = 3;
 int            rr_begin_depth = 1;
 Program        pgram_intersection = 0;
 Program        pgram_bounding_box = 0;
@@ -273,10 +324,10 @@ bool usePostProcessing = false;
 CommandList commandListAdaptive;
 
 // Variance based adaptive sampling specific
-const uint windowSize = 32;						// Powers of two are your friend
+const uint windowSize = 64;						// Powers of two are your friend.
 //const uint maxAdditionalRaysTotal = 50;
-const uint maxAdditionalRaysTotal = 0;			// If using hoelder set this to zero 
-const uint maxAdditionalRaysPerRenderRun = 3;
+const uint maxAdditionalRaysTotal = 0;			// If using hoelder set this to zero. 
+const uint maxAdditionalRaysPerRenderRun = 1;	// Powers of two are not only your friend, but a MUST here!
 float* perWindowVariance = nullptr;
 //int* perPerRayBudget = nullptr;
 
@@ -287,11 +338,10 @@ float* perWindowVariance = nullptr;
 //------------------------------------------------------------------------------
 
 Buffer getOutputBuffer();
-Buffer getPostProcessOutputBuffer();
 void destroyContext();
 void registerExitHandler();
-void createContext();
-void loadGeometry();
+//void createContext();
+//void loadGeometry();
 void glutInitialize(int* argc, char** argv);
 void glutRun();
 
@@ -316,11 +366,6 @@ Buffer getOutputBuffer()
 	return context["output_buffer"]->getBuffer();
 }
 
-Buffer getPostProcessOutputBuffer()
-{
-	return context["post_process_output_buffer"]->getBuffer();
-}
-
 Buffer getPerWindowVarianceBuffer() 
 {
 	return context["per_window_variance_buffer_input"]->getBuffer();
@@ -334,11 +379,6 @@ Buffer getPerRayBudgetBuffer()
 Buffer getPerRayWindowSizeBuffer()
 {
 	return context["window_size_buffer"]->getBuffer();
-}
-
-Buffer getPostProcessInputDepthBuffer()
-{
-	return context["input_scene_depth_buffer"]->getBuffer();
 }
 
 Buffer getOutputDepthBuffer() 
@@ -441,6 +481,34 @@ GeometryInstance createParallelogram(
 	return gi;
 }
 
+//GeometryInstance createParallelogram(
+//	Context context,
+//	const float3& anchor,
+//	const float3& offset1,
+//	const float3& offset2)
+//{
+//	Geometry parallelogram = context->createGeometry();
+//	parallelogram->setPrimitiveCount(1u);
+//	parallelogram->setIntersectionProgram(pgram_intersection);
+//	parallelogram->setBoundingBoxProgram(pgram_bounding_box);
+//
+//	float3 normal = normalize(cross(offset1, offset2));
+//	float d = dot(normal, anchor);
+//	float4 plane = make_float4(normal, d);
+//
+//	float3 v1 = offset1 / dot(offset1, offset1);
+//	float3 v2 = offset2 / dot(offset2, offset2);
+//
+//	parallelogram["plane"]->setFloat(plane);
+//	parallelogram["anchor"]->setFloat(anchor);
+//	parallelogram["v1"]->setFloat(v1);
+//	parallelogram["v2"]->setFloat(v2);
+//
+//	GeometryInstance gi = context->createGeometryInstance();
+//	gi->setGeometry(parallelogram);
+//	return gi;
+//}
+
 // 'fromBufferName' buffer will be declared and created with the specified parameters and passed to 'toBufferName' buffer while it is declared at the same time.
 // The 'toBufferName' buffer will have the same specifications as the 'fromBufferName' buffer.
 void createAndPassBufferFromTo(std::string fromBufferName, std::string toBufferName, RTformat bufferFormat, uint32_t width, uint32_t height, bool use_pbo)
@@ -456,11 +524,50 @@ void passBufferFromTo(std::string fromBufferName, std::string toBufferName)
 	context->declareVariable(toBufferName)->set(context[fromBufferName]->getBuffer());
 }
 
+struct BufferWithBufferProperties
+{
+	Buffer			fromBuffer;				/// Indicating whether buffer already created (fromBuffer = someBuffer) or not (fromBuffer = NULL).
+	std::string		fromBufferName;			/// Indicating that this buffer has to be created if not empty.
+	std::string		bufferName;				/// Indicating that this buffer has to be created if not empty.
+	std::string		toBufferName;			/// Indicating whether buffer will be passed on to another buffer (toBuffer = "someBuffer") or not (fromBuffer = ""). 
+											/// A string here will do since is use 'context->declareVariable(toBufferNameString)->set(context[fromBufferNameString]->getBuffer());'
+	//std::string		deviceName;				/// Buffer name. Indicating whther the buffer has already been created (deviceName = "someName") or not (deviceName = "").
+	RTformat		format;					/// Buffer format. 
+	int				bufferIDAtDevice;		/// Buffer ID acting as incex to access this buffer in the buffer of buffer ids to which it is bound.
+	uint32_t		width;					/// Width of the 1D/2D buffer.
+	uint32_t		height;					/// Height of the 2D buffer.
+	bool			usePbo;					/// Indicate whether to create OptiX buffer from a OGL pixel buffer object or not (OptiX-XPP).
+};
+
+Buffer createOutputBuffer(BufferWithBufferProperties bufferProperties)
+{
+	Buffer buffer = sutil::createOutputBuffer(context, bufferProperties.format, bufferProperties.width, bufferProperties.height, bufferProperties.usePbo);
+
+	return buffer;
+}
+
+Buffer createAndSetOutputBuffer(BufferWithBufferProperties bufferProperties)
+{
+	Buffer buffer = sutil::createOutputBuffer(context, bufferProperties.format, bufferProperties.width, bufferProperties.height, bufferProperties.usePbo);
+	context[bufferProperties.toBufferName]->setBuffer(buffer);
+
+	return buffer;
+}
+
+void addBufferIDToBufferOfBufferIDs(Buffer bufferOfBufferIDs, std::vector<Buffer> buffersToAdd, std::vector<BufferWithBufferProperties> bufferProperties)
+{
+	int* buffers = static_cast<int*>(bufferOfBufferIDs->map());
+	for (int i = 0; i < buffersToAdd.size(); i++)
+	{
+		buffers[bufferProperties[i].bufferIDAtDevice] = buffersToAdd[i]->getId();
+	}
+	bufferOfBufferIDs->unmap();
+}
+
 void createContext()
 {
 	context = Context::create();
 	context->setRayTypeCount(2);
-	//context->setEntryPointCount(1);
 	context->setEntryPointCount(2);
 	context->setStackSize(1800);
 
@@ -472,7 +579,22 @@ void createContext()
 	context["pathtrace_shadow_ray_type"]->setUint(1u);
 	context["rr_begin_depth"]->setUint(rr_begin_depth);
 
-	createAndPassBufferFromTo("output_buffer", "input_buffer", RT_FORMAT_FLOAT4, width, height, use_pbo);
+	Buffer output_buffer = sutil::createOutputBuffer(context, RT_FORMAT_FLOAT4, width, height, use_pbo);
+	context["output_buffer"]->set(output_buffer);
+
+	//createAndPassBufferFromTo("output_current_total_rays_buffer", "input_current_total_rays_buffer", RT_FORMAT_INT4, width, height, use_pbo);
+	Buffer output_current_total_rays_buffer = sutil::createOutputBuffer(context, RT_FORMAT_INT4, width, height, use_pbo);
+	context["output_current_total_rays_buffer"]->set(output_current_total_rays_buffer);
+
+	//passBufferFromTo("input_current_total_rays_buffer", "post_process_input_current_total_rays_buffer");
+
+	////Buffer inputSceneRenderBuffer = context->createBuffer(RT_BUFFER_OUTPUT, RT_FORMAT_FLOAT4, width, height);
+	//Buffer inputBuffers =
+	//	context->createBuffer(RT_BUFFER_INPUT, RT_FORMAT_BUFFER_ID, 1);
+	//int* buffers = static_cast<int*>(inputBuffers->map());
+	//buffers[0] = output_buffer->getId();
+	//inputBuffers->unmap();
+	//context["hoelder_adaptive_buffers"]->set(inputBuffers);
 
 	// Setup programs
 	const char *ptx = sutil::getPtxString(SAMPLE_NAME, "optixPathTracer.cu");
@@ -481,7 +603,8 @@ void createContext()
 	context->setMissProgram(0, context->createProgramFromPTXString(ptx, "miss"));
 
 	// Post processing
-	createAndPassBufferFromTo("output_scene_depth_buffer", "input_scene_depth_buffer", RT_FORMAT_FLOAT4, width, height, use_pbo);
+	Buffer output_scene_depth_buffer = sutil::createOutputBuffer(context, RT_FORMAT_FLOAT4, width, height, use_pbo);
+	context["output_scene_depth_buffer"]->set(output_scene_depth_buffer);
 
 	// This buffer is for debug
 	Buffer depth_gradient_buffer = sutil::createOutputBuffer(context, RT_FORMAT_FLOAT4, width, height, use_pbo);
@@ -496,17 +619,21 @@ void createContext()
 	//setupVarianceBuffer();
 
 	// Adaptive source file
-	const char *adaptive_ptx = sutil::getPtxString(SAMPLE_NAME, "adaptive.cu");
-	// Output buffer of adaptive post processing 
-	createAndPassBufferFromTo("post_process_output_buffer", "post_process_input_buffer", RT_FORMAT_FLOAT4, width, height, use_pbo);
+	const char *adaptive_ptx = sutil::getPtxString(SAMPLE_NAME, "adaptiveOptixPathTracer.cu");
 
-	createAndPassBufferFromTo("per_window_variance_buffer_input", "per_window_variance_buffer_output", RT_FORMAT_FLOAT4, width, height, use_pbo);
+	//const char *variance_adaptive_ptx = sutil::getPtxString(SAMPLE_NAME, "variance_adaptive.cu");
+
+	// Output buffer of adaptive post processing 
+	//createAndPassBufferFromTo("per_window_variance_buffer_input", "per_window_variance_buffer_output", RT_FORMAT_FLOAT4, width, height, use_pbo);
+
+	Buffer output_filter_sum_buffer = sutil::createOutputBuffer(context, RT_FORMAT_FLOAT4, width, height, use_pbo);
+	context["output_filter_sum_buffer"]->set(output_filter_sum_buffer);
+
+	Buffer output_filter_x_sample_sum_buffer = sutil::createOutputBuffer(context, RT_FORMAT_FLOAT4, width, height, use_pbo);
+	context["output_filter_x_sample_sum_buffer"]->set(output_filter_x_sample_sum_buffer);
 
 	context->declareVariable("adaptive_samples_budget_buffer")->set(getPerRayBudgetBuffer());
 
-	passBufferFromTo("input_scene_depth_buffer", "post_process_input_scene_depth_buffer");
-
-	//Buffer hoelder_refinement_buffer = sutil::createOutputBuffer(context, RT_FORMAT_INT4, width, height, use_pbo);
 	Buffer hoelder_refinement_buffer = sutil::createOutputBuffer(context, RT_FORMAT_FLOAT4, width, height, use_pbo);
 	context["hoelder_refinement_buffer"]->set(hoelder_refinement_buffer);
 
@@ -530,143 +657,179 @@ void createContext()
 	context["camera_changed"]->setInt(1);
 }
 
-void loadGeometry()
+void setupMitchellFilter()
 {
-	// Light buffer
-	ParallelogramLight light;
-	light.corner = make_float3(343.0f, 548.6f, 227.0f);
-	light.v1 = make_float3(-130.0f, 0.0f, 0.0f);
-	light.v2 = make_float3(0.0f, 0.0f, 105.0f);
-	light.normal = normalize(cross(light.v1, light.v2));
-	light.emission = make_float3(15.0f, 15.0f, 5.0f);
+	float2 radius;
 
-	Buffer light_buffer = context->createBuffer(RT_BUFFER_INPUT);
-	light_buffer->setFormat(RT_FORMAT_USER);
-	light_buffer->setElementSize(sizeof(ParallelogramLight));
-	int b = sizeof(ParallelogramLight);
-	light_buffer->setSize(1u);
-	int a = sizeof(light);
-	memcpy(light_buffer->map(), &light, sizeof(light));
-	light_buffer->unmap();
-	context["lights"]->setBuffer(light_buffer);
+	int expected_samples_count = sqrt_num_samples * sqrt_num_samples;// 5;
 
+	radius.x = 3.0f;
+	radius.y = 3.0f;
 
-	// Set up material
-	Material diffuse = context->createMaterial();
-	const char *ptx = sutil::getPtxString(SAMPLE_NAME, "optixPathTracer.cu");
-	Program diffuse_ch = context->createProgramFromPTXString(ptx, "diffuse");
-	//Program diffuse_ch = context->createProgramFromPTXString(ptx, "diffuse_textured");
-	Program diffuse_ah = context->createProgramFromPTXString(ptx, "shadow");
-	diffuse->setClosestHitProgram(0, diffuse_ch);
-	diffuse->setAnyHitProgram(1, diffuse_ah);
+	MitchellFilter mitchellFilter(radius, 16, 0.75f);
+	mitchellFilter.fillFilterTable();
 
-	Material diffuse_light = context->createMaterial();
-	Program diffuse_em = context->createProgramFromPTXString(ptx, "diffuseEmitter");
-	diffuse_light->setClosestHitProgram(0, diffuse_em);
+	printf("Mitchell filter values!\n\n");
+	int idx = 0;
+	for (size_t i = 0; i < 16; i++)
+	{
+		for (int j = 0; j < 16; j++)
+		{
+			printf("[ %.3f ]", mitchellFilter.getFilterTable()[idx]);
+			idx++;
+		}
+		printf("\n");
+	}
 
-	// Set up parallelogram programs
-	ptx = sutil::getPtxString(SAMPLE_NAME, "parallelogram.cu");
-	pgram_bounding_box = context->createProgramFromPTXString(ptx, "bounds");
-	pgram_intersection = context->createProgramFromPTXString(ptx, "intersect");
+	// Additional rays test buffer setup
+	Buffer mitchell_filter_table = sutil::createInputOutputBuffer(context, RT_FORMAT_FLOAT, mitchellFilter.getFilterTableWidth(), mitchellFilter.getFilterTableWidth(), false);
+	memcpy(mitchell_filter_table->map(), mitchellFilter.getFilterTable(), sizeof(float) * mitchellFilter.getFilterTableWidth() * mitchellFilter.getFilterTableWidth());
+	mitchell_filter_table->unmap();
 
-	// create geometry instances
-	std::vector<GeometryInstance> gis;
-
-	const float3 white = make_float3(0.8f, 0.8f, 0.8f);
-	const float3 green = make_float3(0.05f, 0.8f, 0.05f);
-	const float3 red = make_float3(0.8f, 0.05f, 0.05f);
-	const float3 light_em = make_float3(15.0f, 15.0f, 5.0f);
-
-	// Floor
-	gis.push_back(createParallelogram(make_float3(0.0f, 0.0f, 0.0f),
-		make_float3(0.0f, 0.0f, 559.2f),
-		make_float3(556.0f, 0.0f, 0.0f)));
-	setMaterial(gis.back(), diffuse, "diffuse_color", white);
-
-	// Ceiling
-	gis.push_back(createParallelogram(make_float3(0.0f, 548.8f, 0.0f),
-		make_float3(556.0f, 0.0f, 0.0f),
-		make_float3(0.0f, 0.0f, 559.2f)));
-	setMaterial(gis.back(), diffuse, "diffuse_color", white);
-
-	// Back wall
-	gis.push_back(createParallelogram(make_float3(0.0f, 0.0f, 559.2f),
-		make_float3(0.0f, 548.8f, 0.0f),
-		make_float3(556.0f, 0.0f, 0.0f)));
-	setMaterial(gis.back(), diffuse, "diffuse_color", white);
-
-	// Right wall
-	gis.push_back(createParallelogram(make_float3(0.0f, 0.0f, 0.0f),
-		make_float3(0.0f, 548.8f, 0.0f),
-		make_float3(0.0f, 0.0f, 559.2f)));
-	setMaterial(gis.back(), diffuse, "diffuse_color", green);
-
-	// Left wall
-	gis.push_back(createParallelogram(make_float3(556.0f, 0.0f, 0.0f),
-		make_float3(0.0f, 0.0f, 559.2f),
-		make_float3(0.0f, 548.8f, 0.0f)));
-	setMaterial(gis.back(), diffuse, "diffuse_color", red);
-
-	// Short block
-	gis.push_back(createParallelogram(make_float3(130.0f, 165.0f, 65.0f),
-		make_float3(-48.0f, 0.0f, 160.0f),
-		make_float3(160.0f, 0.0f, 49.0f)));
-	setMaterial(gis.back(), diffuse, "diffuse_color", white);
-	gis.push_back(createParallelogram(make_float3(290.0f, 0.0f, 114.0f),
-		make_float3(0.0f, 165.0f, 0.0f),
-		make_float3(-50.0f, 0.0f, 158.0f)));
-	setMaterial(gis.back(), diffuse, "diffuse_color", white);
-	gis.push_back(createParallelogram(make_float3(130.0f, 0.0f, 65.0f),
-		make_float3(0.0f, 165.0f, 0.0f),
-		make_float3(160.0f, 0.0f, 49.0f)));
-	setMaterial(gis.back(), diffuse, "diffuse_color", white);
-	gis.push_back(createParallelogram(make_float3(82.0f, 0.0f, 225.0f),
-		make_float3(0.0f, 165.0f, 0.0f),
-		make_float3(48.0f, 0.0f, -160.0f)));
-	setMaterial(gis.back(), diffuse, "diffuse_color", white);
-	gis.push_back(createParallelogram(make_float3(240.0f, 0.0f, 272.0f),
-		make_float3(0.0f, 165.0f, 0.0f),
-		make_float3(-158.0f, 0.0f, -47.0f)));
-	setMaterial(gis.back(), diffuse, "diffuse_color", white);
-
-	// Tall block
-	gis.push_back(createParallelogram(make_float3(423.0f, 330.0f, 247.0f),
-		make_float3(-158.0f, 0.0f, 49.0f),
-		make_float3(49.0f, 0.0f, 159.0f)));
-	setMaterial(gis.back(), diffuse, "diffuse_color", white);
-	gis.push_back(createParallelogram(make_float3(423.0f, 0.0f, 247.0f),
-		make_float3(0.0f, 330.0f, 0.0f),
-		make_float3(49.0f, 0.0f, 159.0f)));
-	setMaterial(gis.back(), diffuse, "diffuse_color", white);
-	gis.push_back(createParallelogram(make_float3(472.0f, 0.0f, 406.0f),
-		make_float3(0.0f, 330.0f, 0.0f),
-		make_float3(-158.0f, 0.0f, 50.0f)));
-	setMaterial(gis.back(), diffuse, "diffuse_color", white);
-	gis.push_back(createParallelogram(make_float3(314.0f, 0.0f, 456.0f),
-		make_float3(0.0f, 330.0f, 0.0f),
-		make_float3(-49.0f, 0.0f, -160.0f)));
-	setMaterial(gis.back(), diffuse, "diffuse_color", white);
-	gis.push_back(createParallelogram(make_float3(265.0f, 0.0f, 296.0f),
-		make_float3(0.0f, 330.0f, 0.0f),
-		make_float3(158.0f, 0.0f, -49.0f)));
-	setMaterial(gis.back(), diffuse, "diffuse_color", white);
-
-	// Create shadow group (no light)
-	GeometryGroup shadow_group = context->createGeometryGroup(gis.begin(), gis.end());
-	shadow_group->setAcceleration(context->createAcceleration("Trbvh"));
-	context["top_shadower"]->set(shadow_group);
-
-	// Light
-	gis.push_back(createParallelogram(make_float3(343.0f, 548.6f, 227.0f),
-		make_float3(-130.0f, 0.0f, 0.0f),
-		make_float3(0.0f, 0.0f, 105.0f)));
-	setMaterial(gis.back(), diffuse_light, "emission_color", light_em);
-
-	// Create geometry group
-	GeometryGroup geometry_group = context->createGeometryGroup(gis.begin(), gis.end());
-	geometry_group->setAcceleration(context->createAcceleration("Trbvh"));
-	context["top_object"]->set(geometry_group);
+	context["mitchell_filter_table"]->set(mitchell_filter_table);
+	context["mitchell_filter_radius"]->setFloat(mitchellFilter.getRadius());
+	context["mitchell_filter_inv_radius"]->setFloat(mitchellFilter.getInvRadius());
+	context["mitchell_filter_table_width"]->setInt(mitchellFilter.getFilterTableWidth());
+	context["expected_samples_count"]->setInt(expected_samples_count);
 }
+
+//void loadGeometry()
+//{
+//	// Light buffer
+//	ParallelogramLight light;
+//	light.corner = make_float3(343.0f, 548.6f, 227.0f);
+//	light.v1 = make_float3(-130.0f, 0.0f, 0.0f);
+//	light.v2 = make_float3(0.0f, 0.0f, 105.0f);
+//	light.normal = normalize(cross(light.v1, light.v2));
+//	light.emission = make_float3(15.0f, 15.0f, 5.0f);
+//
+//	Buffer light_buffer = context->createBuffer(RT_BUFFER_INPUT);
+//	light_buffer->setFormat(RT_FORMAT_USER);
+//	light_buffer->setElementSize(sizeof(ParallelogramLight));
+//	int b = sizeof(ParallelogramLight);
+//	light_buffer->setSize(1u);
+//	int a = sizeof(light);
+//	memcpy(light_buffer->map(), &light, sizeof(light));
+//	light_buffer->unmap();
+//	context["lights"]->setBuffer(light_buffer);
+//
+//
+//	// Set up material
+//	Material diffuse = context->createMaterial();
+//	const char *ptx = sutil::getPtxString(SAMPLE_NAME, "optixPathTracer.cu");
+//	Program diffuse_ch = context->createProgramFromPTXString(ptx, "diffuse");
+//	//Program diffuse_ch = context->createProgramFromPTXString(ptx, "diffuse_textured");
+//	Program diffuse_ah = context->createProgramFromPTXString(ptx, "shadow");
+//	diffuse->setClosestHitProgram(0, diffuse_ch);
+//	diffuse->setAnyHitProgram(1, diffuse_ah);
+//
+//	Material diffuse_light = context->createMaterial();
+//	Program diffuse_em = context->createProgramFromPTXString(ptx, "diffuseEmitter");
+//	diffuse_light->setClosestHitProgram(0, diffuse_em);
+//
+//	// Set up parallelogram programs
+//	ptx = sutil::getPtxString(SAMPLE_NAME, "parallelogram.cu");
+//	pgram_bounding_box = context->createProgramFromPTXString(ptx, "bounds");
+//	pgram_intersection = context->createProgramFromPTXString(ptx, "intersect");
+//
+//	// create geometry instances
+//	std::vector<GeometryInstance> gis;
+//
+//	const float3 white = make_float3(0.8f, 0.8f, 0.8f);
+//	const float3 green = make_float3(0.05f, 0.8f, 0.05f);
+//	const float3 red = make_float3(0.8f, 0.05f, 0.05f);
+//	const float3 light_em = make_float3(15.0f, 15.0f, 5.0f);
+//
+//	// Floor
+//	gis.push_back(createParallelogram(make_float3(0.0f, 0.0f, 0.0f),
+//		make_float3(0.0f, 0.0f, 559.2f),
+//		make_float3(556.0f, 0.0f, 0.0f)));
+//	setMaterial(gis.back(), diffuse, "diffuse_color", white);
+//
+//	// Ceiling
+//	gis.push_back(createParallelogram(make_float3(0.0f, 548.8f, 0.0f),
+//		make_float3(556.0f, 0.0f, 0.0f),
+//		make_float3(0.0f, 0.0f, 559.2f)));
+//	setMaterial(gis.back(), diffuse, "diffuse_color", white);
+//
+//	// Back wall
+//	gis.push_back(createParallelogram(make_float3(0.0f, 0.0f, 559.2f),
+//		make_float3(0.0f, 548.8f, 0.0f),
+//		make_float3(556.0f, 0.0f, 0.0f)));
+//	setMaterial(gis.back(), diffuse, "diffuse_color", white);
+//
+//	// Right wall
+//	gis.push_back(createParallelogram(make_float3(0.0f, 0.0f, 0.0f),
+//		make_float3(0.0f, 548.8f, 0.0f),
+//		make_float3(0.0f, 0.0f, 559.2f)));
+//	setMaterial(gis.back(), diffuse, "diffuse_color", green);
+//
+//	// Left wall
+//	gis.push_back(createParallelogram(make_float3(556.0f, 0.0f, 0.0f),
+//		make_float3(0.0f, 0.0f, 559.2f),
+//		make_float3(0.0f, 548.8f, 0.0f)));
+//	setMaterial(gis.back(), diffuse, "diffuse_color", red);
+//
+//	// Short block
+//	gis.push_back(createParallelogram(make_float3(130.0f, 165.0f, 65.0f),
+//		make_float3(-48.0f, 0.0f, 160.0f),
+//		make_float3(160.0f, 0.0f, 49.0f)));
+//	setMaterial(gis.back(), diffuse, "diffuse_color", white);
+//	gis.push_back(createParallelogram(make_float3(290.0f, 0.0f, 114.0f),
+//		make_float3(0.0f, 165.0f, 0.0f),
+//		make_float3(-50.0f, 0.0f, 158.0f)));
+//	setMaterial(gis.back(), diffuse, "diffuse_color", white);
+//	gis.push_back(createParallelogram(make_float3(130.0f, 0.0f, 65.0f),
+//		make_float3(0.0f, 165.0f, 0.0f),
+//		make_float3(160.0f, 0.0f, 49.0f)));
+//	setMaterial(gis.back(), diffuse, "diffuse_color", white);
+//	gis.push_back(createParallelogram(make_float3(82.0f, 0.0f, 225.0f),
+//		make_float3(0.0f, 165.0f, 0.0f),
+//		make_float3(48.0f, 0.0f, -160.0f)));
+//	setMaterial(gis.back(), diffuse, "diffuse_color", white);
+//	gis.push_back(createParallelogram(make_float3(240.0f, 0.0f, 272.0f),
+//		make_float3(0.0f, 165.0f, 0.0f),
+//		make_float3(-158.0f, 0.0f, -47.0f)));
+//	setMaterial(gis.back(), diffuse, "diffuse_color", white);
+//
+//	// Tall block
+//	gis.push_back(createParallelogram(make_float3(423.0f, 330.0f, 247.0f),
+//		make_float3(-158.0f, 0.0f, 49.0f),
+//		make_float3(49.0f, 0.0f, 159.0f)));
+//	setMaterial(gis.back(), diffuse, "diffuse_color", white);
+//	gis.push_back(createParallelogram(make_float3(423.0f, 0.0f, 247.0f),
+//		make_float3(0.0f, 330.0f, 0.0f),
+//		make_float3(49.0f, 0.0f, 159.0f)));
+//	setMaterial(gis.back(), diffuse, "diffuse_color", white);
+//	gis.push_back(createParallelogram(make_float3(472.0f, 0.0f, 406.0f),
+//		make_float3(0.0f, 330.0f, 0.0f),
+//		make_float3(-158.0f, 0.0f, 50.0f)));
+//	setMaterial(gis.back(), diffuse, "diffuse_color", white);
+//	gis.push_back(createParallelogram(make_float3(314.0f, 0.0f, 456.0f),
+//		make_float3(0.0f, 330.0f, 0.0f),
+//		make_float3(-49.0f, 0.0f, -160.0f)));
+//	setMaterial(gis.back(), diffuse, "diffuse_color", white);
+//	gis.push_back(createParallelogram(make_float3(265.0f, 0.0f, 296.0f),
+//		make_float3(0.0f, 330.0f, 0.0f),
+//		make_float3(158.0f, 0.0f, -49.0f)));
+//	setMaterial(gis.back(), diffuse, "diffuse_color", white);
+//
+//	// Create shadow group (no light)
+//	GeometryGroup shadow_group = context->createGeometryGroup(gis.begin(), gis.end());
+//	shadow_group->setAcceleration(context->createAcceleration("Trbvh"));
+//	context["top_shadower"]->set(shadow_group);
+//
+//	// Light
+//	gis.push_back(createParallelogram(make_float3(343.0f, 548.6f, 227.0f),
+//		make_float3(-130.0f, 0.0f, 0.0f),
+//		make_float3(0.0f, 0.0f, 105.0f)));
+//	setMaterial(gis.back(), diffuse_light, "emission_color", light_em);
+//
+//	// Create geometry group
+//	GeometryGroup geometry_group = context->createGeometryGroup(gis.begin(), gis.end());
+//	geometry_group->setAcceleration(context->createAcceleration("Trbvh"));
+//	context["top_object"]->set(geometry_group);
+//}
 
 void loadComplexGeometry()
 {
@@ -862,19 +1025,16 @@ void glutDisplay()
 	{
 		//setupVarianceBuffer();
 		commandListAdaptive->execute();
-		//sutil::displayBufferGL(getPostProcessOutputBuffer());
+		//sutil::displayBufferGL(getOutputBuffer());
 		//sutil::displayBufferGL(getOutputDepthBuffer());
 		//sutil::displayBufferGL(getDepthGradientBuffer());
 		//sutil::displayBufferGL(getHoelderAlphaBuffer());
 		//sutil::displayBufferGL(getHoelderRefinementBuffer());
-		sutil::displayBufferGL(getTotalSampleCountBuffer());
+		//sutil::displayBufferGL(getTotalSampleCountBuffer());
 		//sutil::displayBufferGL(getHoelderAdaptiveSceneDepthBuffer());
 		//sutil::displayBufferGL(getPerWindowVarianceBuffer());
 	}
-	else
-	{
-		sutil::displayBufferGL(getOutputBuffer());
-	}
+	sutil::displayBufferGL(getOutputBuffer());
 
 	{
 		static unsigned frame_count = 0;
@@ -1028,6 +1188,8 @@ int main(int argc, char* argv[])
 		}
 	}
 
+	//adaptive_PT_context = new AdaptivePathTraceContext();
+
     try { 
 		glutInitialize(&argc, argv);
 
@@ -1035,12 +1197,23 @@ int main(int argc, char* argv[])
 		glewInit();
 #endif
 
+		//adaptive_PT_context->setWidth(width);
+		//adaptive_PT_context->setHeight(height);
+
+		//adaptive_PT_context->setFrameNumber(frame_number);
+
+		//adaptive_PT_context->setWindowSize(windowSize);
+		//adaptive_PT_context->setMaxAdditionalRaysTotal(maxAdditionalRaysTotal);
+		//adaptive_PT_context->setMaxAdditionalRaysPerRenderRun(maxAdditionalRaysPerRenderRun);
+
 		createContext();
+		//adaptive_PT_context->createAdaptiveContext(SAMPLE_NAME, "optixPathTracer.cu", "adaptiveOptixPathTracer.cu", use_pbo, rr_begin_depth);
+
+		setupMitchellFilter();
 
 		camera = new TrackballCamera(context, (int)width, (int)height);
 		camera->setup(make_float3(-500.0f, 1250.0f, 0.0f), make_float3(0.0f, 0.0f, 0.0f), make_float3(0.0f, 1.0f, 0.0f), 35.0f, true);
 
-		//setupCamera();
 		loadComplexGeometry();
 
 		// Adaptive post processing setup
@@ -1059,7 +1232,7 @@ int main(int argc, char* argv[])
 			if (usePostProcessing)
 			{
 				commandListAdaptive->execute();
-				sutil::displayBufferPPM(out_file.c_str(), getPostProcessOutputBuffer(), false);
+				sutil::displayBufferPPM(out_file.c_str(), getOutputBuffer(), false);
 			}
 			else
 			{

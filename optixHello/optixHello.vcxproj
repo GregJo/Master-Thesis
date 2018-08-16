@@ -335,17 +335,24 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
   </ItemGroup>
   <ItemGroup>
     <None Include="..\src\optixHello\draw_color.cu" />
-    <None Include="..\src\optixHello\adaptive.cu" />
+    <None Include="..\src\optixHello\adaptiveOptixPathTracer.cu" />
     <None Include="..\src\optixHello\optixPathTracer.cu" />
     <None Include="..\src\optixHello\parallelogram.cu" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="..\src\optixHello\AdaptivePathTraceRenderContext.h" />
+    <ClInclude Include="..\src\optixHello\Buffers.h" />
     <ClInclude Include="..\src\optixHello\Camera.h" />
+    <ClInclude Include="..\src\optixHello\HoelderAdaptive.h" />
     <ClInclude Include="..\src\optixHello\IOptixRenderContext.h" />
+    <ClInclude Include="..\src\optixHello\MitchellFilter.h" />
+    <ClInclude Include="..\src\optixHello\MitchellFilterDevice.h" />
     <ClInclude Include="..\src\optixHello\optixPathTracer.h" />
+    <ClInclude Include="..\src\optixHello\PathTraceRenderContext.h" />
     <ClInclude Include="..\src\optixHello\random.h" />
     <ClInclude Include="..\src\optixHello\RayTraceRenderContext.h" />
     <ClInclude Include="..\src\optixHello\TrackballCamera.h" />
+    <ClInclude Include="..\src\optixHello\VarianceAdaptive.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
