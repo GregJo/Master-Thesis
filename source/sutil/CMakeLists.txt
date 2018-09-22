@@ -159,7 +159,8 @@ set(sources
 
 message("${sources}")
 
-include(FindSUtilGLUT)
+#include(FindSUtilGLUT)
+include(${OptiX_SDK_DIR}/CMake/FindSUtilGLUT.cmake)
 
 if(OPENGL_FOUND AND NOT APPLE)
   list(APPEND sources "glew.c" "GL/glew.h")
@@ -187,18 +188,11 @@ if(GLUT_FOUND AND OPENGL_FOUND)
 
 endif()
 
-# Group source files
-#set(header_group "Header Files (API)")
-#set(source_group "Source Files")
-#source_group_by_path(${include_path} "\\\\.h$|\\\\.hpp$" 
-#    ${header_group} ${headers})
-#source_group_by_path(${source_path}  "\\\\.cpp$|\\\\.c$|\\\\.h$|\\\\.hpp$" 
-#    ${source_group} ${sources})
-
-
 # 
 # Create library
 # 
+
+string(REPLACE "\\" "/" sources "${sources}")
 
 # Build library
 add_library(${target}

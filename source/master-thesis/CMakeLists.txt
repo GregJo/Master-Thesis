@@ -196,7 +196,6 @@ target_link_libraries(${target}
     ${META_PROJECT_NAME}::sutil_sdk
 )
 
-#set(sutil_target "sutil_sdk")
 if(CUDA_NVRTC_ENABLED)
   target_link_libraries(${target} PRIVATE ${CUDA_nvrtc_LIBRARY})
 endif()
