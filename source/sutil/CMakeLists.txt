@@ -159,8 +159,8 @@ set(sources
 
 message("${sources}")
 
-#include(FindSUtilGLUT)
-include(${OptiX_SDK_DIR}/CMake/FindSUtilGLUT.cmake)
+include(FindSUtilGLUT)
+#include(${OptiX_SDK_DIR}/CMake/FindSUtilGLUT.cmake)
 
 if(OPENGL_FOUND AND NOT APPLE)
   list(APPEND sources "glew.c" "GL/glew.h")
