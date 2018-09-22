@@ -16,6 +16,7 @@
 *.so
 *.dylib
 *.dll
+!freeglut.dll
 
 # Fortran module files
 *.mod
@@ -26,6 +27,7 @@
 *.la
 *.a
 *.lib
+!freeglut.lib
 
 # Executables
 *.exe
